@@ -1,3 +1,4 @@
+require('dotenv').config(); // Chargement des variables d'environnement
 const path = require('path');
 const express = require('express');
 const mysql = require('mysql');
@@ -24,10 +25,10 @@ const app = express();
 
 // Configuration de la connexion à la base de données
 const connection = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: '',
-  database: 'estagedb'
+  host: process.env.DB_HOST ,
+  user: process.env.DB_USER ,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME
 });
 
 // Établir la connexion à la base de données
