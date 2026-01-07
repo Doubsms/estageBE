@@ -27,7 +27,7 @@ const connection = mysql.createConnection({
   host: 'localhost',
   user: 'root',
   password: '',
-  database: 'projetstage2024'
+  database: 'estagedb'
 });
 
 // Établir la connexion à la base de données
@@ -47,7 +47,7 @@ app.use(cors());
 
 // Route pour la page d'accueil
 app.get('/', (req, res) => {
-  res.send('Bienvenue sur la page d\'accueil');
+  res.send('Bienvenue sur la page d\'accueil INSBE');
 });
 
 // Définir la connexion comme une propriété de l'application
@@ -143,8 +143,6 @@ app.get('/historiquespeciaux', (req, res) => historiqueRapport.getHistoriqueSpec
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Routes pour recevoir le fichier upload
-app.post('/upload', uploadsRouter);
-
 
 // Démarrer le serveur
 app.listen(4000, () => {
