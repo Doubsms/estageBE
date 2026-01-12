@@ -1,5 +1,8 @@
 // Récupérer la liste des demandes non traitées
 exports.getDemandesNT = async (pool, req, res) => {
+console.log('Récupération des demandes non traitées...');
+console.log(req.admin);
+
   const query = `
     SELECT e.MATRICULEETUDIANT,
            e.NOMETUDIANT,

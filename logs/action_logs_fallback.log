@@ -1,0 +1,1 @@
+[2026-01-12T16:02:55.692Z] Échec log DB: {"user_email":"sengueldoubla@gmail.com","user_name":"DOUBLA SENGUEL","action":"Consultation Consultation demandes non traitées","endpoint":"/demandesNT","error":"Unknown column 'http_request_id' in 'field list'"}
