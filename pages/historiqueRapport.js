@@ -1,43 +1,5 @@
-// Récupérer l'historique des depots de rapport
-exports.getHistorique = (connection, req, res) => {
-    const query = `
-      SELECT r.IDDOSSIER,
-             r.MATRICULE,
-             r.COMMENTAIRE,
-             r.THEME,
-             r.FICHIER,
-             DATE_FORMAT(r.DATE, '%d/%m/%Y') AS DATE,
-              e.NOMETUDIANT,
-              e.PRENOMETUDIANT,
-              e.ETABLISSEMENT
-      FROM rapport r
-      JOIN etudiant e ON e.MATRICULEETUDIANT = r.MATRICULE
-    `;
-  
-    connection.query(query, (error, results) => {
-      if (error) {
-        console.error('Erreur lors de la récupération de l\'historique des rapports :', error);
-        res.status(500).json({ error: 'Erreur lors de l\'historique des rapports' });
-        return;
-      }
-  
-      if (results.length === 0) {
-        res.status(404).json({ error: 'Aucun historique trouvé' });
-        return;
-      }
-  
-      // Ajouter le chemin complet pour les fichiers
-      const demandes = results.map(demande => ({
-        ...demande,
-        FICHIER: `${req.protocol}://${req.get('host')}/uploads/${demande.FICHIER}`,
-      }));
-  
-      res.json(demandes);
-    });
-  };
-  
-  // Récupérer la liste des rapporst spéciaux
-exports.getHistoriqueSpeciaux = (connection, req, res) => {
+// --- 1. RÉCUPÉRER L'HISTORIQUE GLOBAL DES RAPPORTS ---
+exports.getHistorique = async (pool, req, res) => {
   const query = `
     SELECT r.IDDOSSIER,
            r.MATRICULE,
@@ -45,32 +7,70 @@ exports.getHistoriqueSpeciaux = (connection, req, res) => {
            r.THEME,
            r.FICHIER,
            DATE_FORMAT(r.DATE, '%d/%m/%Y') AS DATE,
-            e.NOMETUDIANT,
-            e.PRENOMETUDIANT,
-            e.ETABLISSEMENT
+           e.NOMETUDIANT,
+           e.PRENOMETUDIANT,
+           e.ETABLISSEMENT
+    FROM rapport r
+    JOIN etudiant e ON e.MATRICULEETUDIANT = r.MATRICULE
+  `;
+
+  try {
+    const [results] = await pool.query(query);
+
+    if (results.length === 0) {
+      // On renvoie un tableau vide plutôt qu'une erreur 404
+      // Cela permet au frontend d'afficher "Aucun rapport trouvé" proprement
+      return res.json([]);
+    }
+
+    const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
+
+    const rapports = results.map(rapport => ({
+      ...rapport,
+      FICHIER: rapport.FICHIER ? `${baseUrl}${rapport.FICHIER}` : null,
+    }));
+
+    res.json(rapports);
+  } catch (error) {
+    console.error('Erreur SQL historique global:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération de l\'historique des rapports' });
+  }
+};
+
+// --- 2. RÉCUPÉRER LA LISTE DES RAPPORTS SPÉCIAUX (UTILES) ---
+exports.getHistoriqueSpeciaux = async (pool, req, res) => {
+  const query = `
+    SELECT r.IDDOSSIER,
+           r.MATRICULE,
+           r.COMMENTAIRE,
+           r.THEME,
+           r.FICHIER,
+           DATE_FORMAT(r.DATE, '%d/%m/%Y') AS DATE,
+           e.NOMETUDIANT,
+           e.PRENOMETUDIANT,
+           e.ETABLISSEMENT
     FROM rapport r
     JOIN etudiant e ON e.MATRICULEETUDIANT = r.MATRICULE
     WHERE r.COMMENTAIRE = "utile"
   `;
 
-  connection.query(query, (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la récupération de l\'historique des rapports :', error);
-      res.status(500).json({ error: 'Erreur lors de l\'historique des rapports' });
-      return;
-    }
+  try {
+    const [results] = await pool.query(query);
 
     if (results.length === 0) {
-      res.status(404).json({ error: 'Aucun historique trouvé' });
-      return;
+      return res.json([]);
     }
 
-    // Ajouter le chemin complet pour les fichiers
-    const demandes = results.map(demande => ({
-      ...demande,
-      FICHIER: `${req.protocol}://${req.get('host')}/uploads/${demande.FICHIER}`,
+    const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
+
+    const rapportsSpeciaux = results.map(rapport => ({
+      ...rapport,
+      FICHIER: rapport.FICHIER ? `${baseUrl}${rapport.FICHIER}` : null,
     }));
 
-    res.json(demandes);
-  });
+    res.json(rapportsSpeciaux);
+  } catch (error) {
+    console.error('Erreur SQL historique spéciaux:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des rapports spéciaux' });
+  }
 };

@@ -1,25 +1,21 @@
-const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid'); // Importation de la fonction uuid
-const fs = require('fs');
-const router = express.Router();
+const { v4: uuidv4 } = require('uuid');
 
-// Configuration de Multer pour le stockage des fichiers
+// Configuration Multer (reste identique car Multer gère ses propres callbacks)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Dossier où les fichiers seront stockés
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    // Générer un nom de fichier unique avec UUID et conserver l'extension d'origine
     const uniqueName = uuidv4() + path.extname(file.originalname);
-    cb(null, uniqueName); 
+    cb(null, uniqueName);
   }
 });
 
 const upload = multer({ storage });
 
-// Middleware pour le téléchargement des fichiers
+// Middleware pour les fichiers multiples
 const handleFileUpload = upload.fields([
   { name: 'CNI', maxCount: 1 },
   { name: 'CERTIFICAT', maxCount: 1 },
@@ -28,102 +24,105 @@ const handleFileUpload = upload.fields([
   { name: 'PHOTOPROFIL', maxCount: 1 }
 ]);
 
-// Récupérer tous les dossiers
-exports.getAll = (connection, req, res) => {
+// 1. Récupérer tous les dossiers
+exports.getAll = async (pool, req, res) => {
   const query = 'SELECT * FROM dossier';
-  connection.query(query, (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la récupération des dossiers :', error);
-      res.status(500).json({ error: 'Erreur lors de la récupération des dossiers' });
-      return;
-    }
+  try {
+    const [results] = await pool.query(query);
     res.json(results);
-  });
+  } catch (error) {
+    console.error('Erreur SQL getAll dossiers:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération des dossiers' });
+  }
 };
 
-// Récupérer un dossier par son ID
-exports.getById = (connection, req, res) => {
+// 2. Récupérer un dossier par ID
+exports.getById = async (pool, req, res) => {
   const id = req.params.id;
   const query = 'SELECT * FROM dossier WHERE NUMERODEDOSSIER = ?';
-  connection.query(query, [id], (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la récupération du dossier :', error);
-      res.status(500).json({ error: 'Erreur lors de la récupération du dossier' });
-      return;
-    }
+  try {
+    const [results] = await pool.query(query, [id]);
     if (results.length === 0) {
-      res.status(404).json({ error: 'Dossier non trouvé' });
-      return;
+      return res.status(404).json({ error: 'Dossier non trouvé' });
     }
     res.json(results[0]);
-  });
+  } catch (error) {
+    console.error('Erreur SQL getById dossier:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération du dossier' });
+  }
 };
 
-// Créer un nouveau dossier
-exports.create = (connection, req, res) => {
-  handleFileUpload(req, res, (err) => {
+// 3. Créer un nouveau dossier (Multi-fichiers)
+exports.create = async (pool, req, res) => {
+  // Multer n'étant pas une promesse par défaut, on garde cette structure pour l'upload
+  handleFileUpload(req, res, async (err) => {
     if (err) {
-      console.error('Erreur lors du téléchargement des fichiers :', err);
-      res.status(500).json({ error: 'Erreur lors du téléchargement des fichiers' });
-      return;
+      console.error('Erreur Multer:', err);
+      return res.status(500).json({ error: 'Erreur lors du téléchargement des fichiers' });
     }
 
-    const { MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT } = req.body;
-    const query = 'INSERT INTO dossier (MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT, CNI, CERTIFICAT, LETTREMOTIVATION, LETTRERECOMMENDATION, PHOTOPROFIL) VALUES (?, ?, ?, "non traité", ?, ?, ?, ?, ?)';
-    
-    connection.query(query, [
-      MATRICULEETUDIANT,
-      DATEDEBUTDESEANCE,
-      DATEFINDESEANCE,
-      req.files.CNI ? req.files.CNI[0].filename : null,
-      req.files.CERTIFICAT ? req.files.CERTIFICAT[0].filename : null,
-      req.files.LETTREMOTIVATION ? req.files.LETTREMOTIVATION[0].filename : null,
-      req.files.LETTRERECOMMENDATION ? req.files.LETTRERECOMMENDATION[0].filename : null,
-      req.files.PHOTOPROFIL ? req.files.PHOTOPROFIL[0].filename : null
-    ], (error, results) => {
-      if (error) {
-        console.error('Erreur lors de la création du dossier :', error);
-        res.status(500).json({ error: 'Erreur lors de la création du dossier' });
-        return;
-      }
+    try {
+      const { MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE } = req.body;
+      const files = req.files || {};
+
+      const query = `
+        INSERT INTO dossier 
+        (MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT, CNI, CERTIFICAT, LETTREMOTIVATION, LETTRERECOMMENDATION, PHOTOPROFIL) 
+        VALUES (?, ?, ?, "non traité", ?, ?, ?, ?, ?)
+      `;
+
+      await pool.query(query, [
+        MATRICULEETUDIANT,
+        DATEDEBUTDESEANCE,
+        DATEFINDESEANCE,
+        files.CNI ? files.CNI[0].filename : null,
+        files.CERTIFICAT ? files.CERTIFICAT[0].filename : null,
+        files.LETTREMOTIVATION ? files.LETTREMOTIVATION[0].filename : null,
+        files.LETTRERECOMMENDATION ? files.LETTRERECOMMENDATION[0].filename : null,
+        files.PHOTOPROFIL ? files.PHOTOPROFIL[0].filename : null
+      ]);
+
       res.json({ message: 'Dossier créé avec succès' });
-    });
+    } catch (error) {
+      console.error('Erreur SQL create dossier:', error);
+      res.status(500).json({ error: 'Erreur lors de la création du dossier en base de données' });
+    }
   });
 };
 
-// Mettre à jour un dossier
-exports.update = (connection, req, res) => {
+// 4. Mettre à jour un dossier
+exports.update = async (pool, req, res) => {
   const id = req.params.id;
   const { MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT } = req.body;
-  const query = 'UPDATE dossier SET MATRICULEETUDIANT = ?, DATEDEBUTDESEANCE = ?, DATEFINDESEANCE = ?, ETAT = ? WHERE NUMERODEDOSSIER = ?';
-  connection.query(query, [MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT, id], (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la mise à jour du dossier :', error);
-      res.status(500).json({ error: 'Erreur lors de la mise à jour du dossier' });
-      return;
-    }
-    if (results.affectedRows === 0) {
-      res.status(404).json({ error: 'Dossier non trouvé' });
-      return;
+  const query = `
+    UPDATE dossier 
+    SET MATRICULEETUDIANT = ?, DATEDEBUTDESEANCE = ?, DATEFINDESEANCE = ?, ETAT = ? 
+    WHERE NUMERODEDOSSIER = ?
+  `;
+  try {
+    const [result] = await pool.query(query, [MATRICULEETUDIANT, DATEDEBUTDESEANCE, DATEFINDESEANCE, ETAT, id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Dossier non trouvé' });
     }
     res.json({ message: 'Dossier mis à jour avec succès' });
-  });
+  } catch (error) {
+    console.error('Erreur SQL update dossier:', error);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du dossier' });
+  }
 };
 
-// Supprimer un dossier
-exports.delete = (connection, req, res) => {
+// 5. Supprimer un dossier
+exports.delete = async (pool, req, res) => {
   const id = req.params.id;
   const query = 'DELETE FROM dossier WHERE NUMERODEDOSSIER = ?';
-  connection.query(query, [id], (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la suppression du dossier :', error);
-      res.status(500).json({ error: 'Erreur lors de la suppression du dossier' });
-      return;
-    }
-    if (results.affectedRows === 0) {
-      res.status(404).json({ error: 'Dossier non trouvé' });
-      return;
+  try {
+    const [result] = await pool.query(query, [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Dossier non trouvé' });
     }
     res.json({ message: 'Dossier supprimé avec succès' });
-  });
+  } catch (error) {
+    console.error('Erreur SQL delete dossier:', error);
+    res.status(500).json({ error: 'Erreur lors de la suppression du dossier' });
+  }
 };

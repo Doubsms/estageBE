@@ -1,5 +1,5 @@
 // Récupérer la liste des demandes non traitées
-exports.getDemandesNT = (connection, req, res) => {
+exports.getDemandesNT = async (pool, req, res) => {
   const query = `
     SELECT e.MATRICULEETUDIANT,
            e.NOMETUDIANT,
@@ -17,27 +17,32 @@ exports.getDemandesNT = (connection, req, res) => {
     WHERE d.ETAT = "non traité"
   `;
 
-  connection.query(query, (error, results) => {
-    if (error) {
-      console.error('Erreur lors de la récupération des demandes non traitées :', error);
-      res.status(500).json({ error: 'Erreur lors de la récupération des demandes non traitées' });
-      return;
-    }
+  try {
+    // Exécution de la requête avec await
+    const [results] = await pool.query(query);
 
+    // Si aucun résultat, on renvoie un tableau vide (plus propre pour le frontend que de renvoyer une erreur 404)
     if (results.length === 0) {
-      res.status(404).json({ error: 'Aucune demande non traitée trouvée' });
-      return;
+      return res.json([]);
     }
 
     // Ajouter le chemin complet pour les fichiers
+    const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
+    
     const demandes = results.map(demande => ({
       ...demande,
-      CNI: `${req.protocol}://${req.get('host')}/uploads/${demande.CNI}`,
-      CERTIFICAT: `${req.protocol}://${req.get('host')}/uploads/${demande.CERTIFICAT}`,
-      LETTREMOTIVATION: `${req.protocol}://${req.get('host')}/uploads/${demande.LETTREMOTIVATION}`,
-      LETTRERECOMMENDATION: `${req.protocol}://${req.get('host')}/uploads/${demande.LETTRERECOMMENDATION}`
+      CNI: demande.CNI ? `${baseUrl}${demande.CNI}` : null,
+      CERTIFICAT: demande.CERTIFICAT ? `${baseUrl}${demande.CERTIFICAT}` : null,
+      LETTREMOTIVATION: demande.LETTREMOTIVATION ? `${baseUrl}${demande.LETTREMOTIVATION}` : null,
+      LETTRERECOMMENDATION: demande.LETTRERECOMMENDATION ? `${baseUrl}${demande.LETTRERECOMMENDATION}` : null
     }));
 
     res.json(demandes);
-  });
+
+  } catch (error) {
+    console.error('Erreur lors de la récupération des demandes non traitées :', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des demandes non traitées' 
+    });
+  }
 };

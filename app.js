@@ -1,10 +1,14 @@
-require('dotenv').config(); // Chargement des variables d'environnement
+require('dotenv').config(); 
 const path = require('path');
 const express = require('express');
-const mysql = require('mysql');
+const mysql = require('mysql2/promise');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const uploadsRouter = require('./controllers/fileUpload.js');
+
+// Import du middleware d'authentification
+const {authenticateToken} = require('./fonctionalites/authenticateToken.js');
+
+// Import des contrôleurs
 const attribuerController = require('./controllers/attribuer.js');
 const chargeDeStageController = require('./controllers/charge_de_stage');
 const dossierController = require('./controllers/dossier');
@@ -12,140 +16,125 @@ const encadreurController = require('./controllers/encadreur.js');
 const etudiantController = require('./controllers/etudiant');
 const studentInfoNT = require('./pages/demandesNT.js');
 const studentInfoActuel = require('./pages/stagiairesActuels.js');
-const envoiMail = require('./pages/traitement.js'); // Assurez-vous que le chemin est correct
+const envoiMail = require('./pages/traitement.js');
 const dashboardRouter = require('./pages/acceuil.js');
 const rapport = require('./pages/nouveauRapport.js');
 const historiqueRapport = require('./pages/historiqueRapport.js');
 const administrateur = require('./pages/signing.js');
 const profil = require('./pages/profile.js');
-const { profile } = require('console');
-
 
 const app = express();
 
-// Configuration de la connexion à la base de données
-const connection = mysql.createConnection({
-  host: process.env.DB_HOST ,
-  user: process.env.DB_USER ,
+// --- CONFIGURATION DE LA BASE DE DONNÉES (POOL) ---
+const pool = mysql.createPool({
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-// Établir la connexion à la base de données
-connection.connect(err => {
-  if (err) {
-    console.error('Erreur de connexion à la base de données :', err);
-    return;
-  }
-  console.log('Connecté à la base de données MySQL');
-}); 
+// Test de la connexion au démarrage
+pool.getConnection()
+  .then(conn => {
+    console.log('✅ Connecté à la base de données MySQL (INS BE)');
+    conn.release();
+  })
+  .catch(err => {
+    console.error('❌ Erreur de connexion à la base de données :', err);
+  });
 
-// Middleware pour parser le corps des requêtes en JSON
-app.use(bodyParser.json());
-
-// Middleware CORS
+// --- MIDDLEWARES ---
 app.use(cors());
-
-// Route pour la page d'accueil
-app.get('/', (req, res) => {
-  res.send('Bienvenue sur la page d\'accueil INSBE');
-});
-
-// Définir la connexion comme une propriété de l'application
-app.set('connection', connection);
-
+app.use(bodyParser.json());
 app.use(express.json());
-//Déclaration des routes
-
-// Servir les fichiers statiques à partir du répertoire "uploads"
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Route moi l'envoie de mail
-app.use('/mail', envoiMail);
+// Middleware de logging pour déboguer
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`);
+  next();
+});
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Définir le pool comme propriété globale
+app.set('connection', pool);
 
-// Routes pour les opérations liées à la table 'attribuer'
-app.get('/attributions', (req, res) => attribuerController.getAll(connection, req, res));
-app.get('/attributions/:matriculeCharge/:matriculeEncadreur', (req, res) => attribuerController.getByMatricules(connection, req, res));
-app.post('/attributions', (req, res) => attribuerController.create(connection, req, res));
-app.delete('/attributions/:matriculeCharge/:matriculeEncadreur', (req, res) => attribuerController.delete(connection, req, res));
+// --- ROUTES PUBLIQUES (sans authentification) ---
+app.get('/', (req, res) => {
+  res.send('Bienvenue sur l\'API E-Stage INS Cameroun');
+});
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Authentification (routes publiques)
+app.post('/nouveauadmin', authenticateToken, (req, res) => administrateur.create(pool, req, res));
+app.post('/logadmin', (req, res) => administrateur.login(pool, req, res));
 
-// Routes pour les opérations liées à la table 'charge_de_stage'
-app.get('/charge_de_stage', (req, res) => chargeDeStageController.getAll(connection, req, res));
-app.get('/charge_de_stage/:id', (req, res) => chargeDeStageController.getById(connection, req, res));
-app.post('/charge_de_stage', (req, res) => chargeDeStageController.create(connection, req, res));
-app.put('/charge_de_stage/:id', (req, res) => chargeDeStageController.update(connection, req, res));
-app.delete('/charge_de_stage/:id', (req, res) => chargeDeStageController.delete(connection, req, res));
+//Verification du Token (route publique)
+// Routes pour les dash-values
+app.get('/verify-token', authenticateToken, (req, res) => etudiantController.getAll(pool, req, res));
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --- ROUTES PROTÉGÉES (avec authentification JWT) ---
 
-// Routes pour les opérations liées à la table 'dossier'
-app.get('/dossiers', (req, res) => dossierController.getAll(connection, req, res));
-app.get('/dossiers/:id', (req, res) => dossierController.getById(connection, req, res));
-app.post('/dossiers', (req, res) => dossierController.create(connection, req, res));
-app.put('/dossiers/:id', (req, res) => dossierController.update(connection, req, res));
-app.delete('/dossiers/:id', (req, res) => dossierController.delete(connection, req, res));
+// Gestion des envois d'emails (protégé)
+app.use('/mail', authenticateToken, envoiMail);
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --- ATTRIBUTIONS (protégé) ---
+app.get('/attributions', authenticateToken, (req, res) => attribuerController.getAll(pool, req, res));
+app.get('/attributions/:matriculeCharge/:matriculeEncadreur', authenticateToken, (req, res) => attribuerController.getByMatricules(pool, req, res));
+app.post('/attributions', authenticateToken, (req, res) => attribuerController.create(pool, req, res));
+app.delete('/attributions/:matriculeCharge/:matriculeEncadreur', authenticateToken, (req, res) => attribuerController.delete(pool, req, res));
 
-// Routes pour les opérations liées à la table 'encadreur'
-app.get('/encadreurs', (req, res) => encadreurController.getAll(connection, req, res));
-app.get('/encadreurs/:id', (req, res) => encadreurController.getById(connection, req, res));
-app.post('/encadreurs', (req, res) => encadreurController.create(connection, req, res));
-app.put('/encadreurs/:id', (req, res) => encadreurController.update(connection, req, res));
-app.delete('/encadreurs/:id', (req, res) => encadreurController.delete(connection, req, res));
+// --- CHARGÉS DE STAGE (protégé) ---
+app.get('/charge_de_stage', authenticateToken, (req, res) => chargeDeStageController.getAll(pool, req, res));
+app.get('/charge_de_stage/:id', authenticateToken, (req, res) => chargeDeStageController.getById(pool, req, res));
+app.post('/charge_de_stage', authenticateToken, (req, res) => chargeDeStageController.create(pool, req, res));
+app.put('/charge_de_stage/:id', authenticateToken, (req, res) => chargeDeStageController.update(pool, req, res));
+app.delete('/charge_de_stage/:id', authenticateToken, (req, res) => chargeDeStageController.delete(pool, req, res));
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --- DOSSIERS (protégé) ---
+app.get('/dossiers', authenticateToken, (req, res) => dossierController.getAll(pool, req, res));
+app.get('/dossiers/:id', authenticateToken, (req, res) => dossierController.getById(pool, req, res));
+app.post('/dossiers', authenticateToken, (req, res) => dossierController.create(pool, req, res));
+app.put('/dossiers/:id', authenticateToken, (req, res) => dossierController.update(pool, req, res));
+app.delete('/dossiers/:id', authenticateToken, (req, res) => dossierController.delete(pool, req, res));
 
-// Routes pour les opérations liées à la table 'etudiant'
-app.get('/etudiants', (req, res) => etudiantController.getAll(connection, req, res));
-app.get('/etudiants/:matricule', (req, res) => etudiantController.getByMatricule(connection, req, res));
-app.post('/etudiants', (req, res) => etudiantController.create(connection, req, res));
-app.put('/etudiants/:matricule', (req, res) => etudiantController.update(connection, req, res));
-app.delete('/etudiants/:matricule', (req, res) => etudiantController.delete(connection, req, res));
+// --- ENCADREURS (protégé) ---
+app.get('/encadreurs', authenticateToken, (req, res) => encadreurController.getAll(pool, req, res));
+app.get('/encadreurs/:id', authenticateToken, (req, res) => encadreurController.getById(pool, req, res));
+app.post('/encadreurs', authenticateToken, (req, res) => encadreurController.create(pool, req, res));
+app.put('/encadreurs/:id', authenticateToken, (req, res) => encadreurController.update(pool, req, res));
+app.delete('/encadreurs/:id', authenticateToken, (req, res) => encadreurController.delete(pool, req, res));
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-app.get('/demandesNT', (req, res) => studentInfoNT.getDemandesNT(connection, req, res));
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-app.get('/stagiaresActuel', (req, res) => studentInfoActuel.getStagiaresActuels(connection, req, res));
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-app.post('/profile', (req, res) => profil.getprofile(connection, req, res));
-////////////////////////////////////////////////////////////////////////////////////////////
-app.get('/stagiaresAccepte', (req, res) => studentInfoActuel.getStagiaresAccepte(connection, req, res));
-app.put('/theme', (req, res) => studentInfoActuel.updateTheme(connection, req, res));
+// --- ÉTUDIANTS (protégé) ---
+app.get('/etudiants', authenticateToken, (req, res) => etudiantController.getAll(pool, req, res));
+app.get('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.getByMatricule(pool, req, res));
+app.post('/etudiants', authenticateToken, (req, res) => etudiantController.create(pool, req, res));
+app.put('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.update(pool, req, res));
+app.delete('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.delete(pool, req, res));
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// --- GESTION DES STAGES & DASHBOARD (protégé) ---
+app.get('/demandesNT', authenticateToken, (req, res) => studentInfoNT.getDemandesNT(pool, req, res));
+app.get('/stagiaresActuel', authenticateToken, (req, res) => studentInfoActuel.getStagiaresActuels(pool, req, res));
+app.get('/stagiaresAccepte', authenticateToken, (req, res) => studentInfoActuel.getStagiaresAccepte(pool, req, res));
+app.put('/theme', authenticateToken, (req, res) => studentInfoActuel.updateTheme(pool, req, res));
 
-//Route pour la page d'acceuil
-app.use('/dashboard', dashboardRouter);
+// Dashboard (protégé)
+app.use('/dashboard', authenticateToken, dashboardRouter);
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Profil (protégé)
+app.post('/profile', authenticateToken, (req, res) => profil.getprofile(pool, req, res));
 
-//Route pour la page d'acceuil
-app.post('/nouveaurapport', (req, res) => rapport.create(connection, req, res));
-app.put('/updaterapport', (req, res) => rapport.update(connection, req, res));
+// --- RAPPORTS (protégé) ---
+app.post('/nouveaurapport', authenticateToken, (req, res) => rapport.create(pool, req, res));
+app.put('/updaterapport', authenticateToken, (req, res) => rapport.update(pool, req, res));
+app.get('/historique', authenticateToken, (req, res) => historiqueRapport.getHistorique(pool, req, res));
+app.get('/historiquespeciaux', authenticateToken, (req, res) => historiqueRapport.getHistoriqueSpeciaux(pool, req, res));
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-//Route pour les pages de connexions
-app.post('/nouveauadmin', (req, res) => administrateur.create(connection, req, res));
-app.post('/logadmin', (req, res) => administrateur.login(connection, req, res));
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-//Routes pour la rubrique de la gestion rapports de stage
-app.get('/historique', (req, res) => historiqueRapport.getHistorique(connection, req, res));
-app.get('/historiquespeciaux', (req, res) => historiqueRapport.getHistoriqueSpeciaux(connection, req, res));
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// Routes pour recevoir le fichier upload
-
-// Démarrer le serveur
-app.listen(4000, () => {
-  console.log('Serveur démarré sur le port 4000');
+// --- DÉMARRAGE DU SERVEUR ---
+const PORT = process.env.PORT;
+app.listen(PORT, () => {
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
+  console.log(`🔐 Mode d'authentification: JWT activé`);
 });

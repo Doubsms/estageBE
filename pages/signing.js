@@ -1,14 +1,12 @@
-const express = require('express');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
-const bcrypt = require('bcrypt'); // Ajout de bcrypt
-const { Interface } = require('readline');
-const router = express.Router();
+
 const saltRounds = 10;
 
-// Configuration de Multer pour le stockage des fichiers
+// --- CONFIGURATION DE STOCKAGE DES PHOTOS ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/');
@@ -19,92 +17,104 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage }).single('image');
 
-// Middleware pour le téléchargement des fichiers
-const handleFileUpload = upload.fields([
-  { name: 'image', maxCount: 1 },
-]);
-
-// Créer un nouveau administrateur
-exports.create = async (connection, req, res) => {
-  handleFileUpload(req, res, async (err) => {
+// --- 1. CRÉATION D'UN ADMINISTRATEUR (SIGNUP) ---
+exports.create = (pool, req, res) => {
+  // Utilisation de multer pour gérer l'upload
+  upload(req, res, async (err) => {
     if (err) {
-      console.error('Erreur lors du téléchargement de la photo :', err);
-      res.status(500).json({ error: 'Erreur lors du téléchargement de la photo' });
-      return;
+      console.error('Erreur Multer:', err);
+      return res.status(500).json({ error: 'Erreur lors du téléchargement de la photo' });
     }
 
     const { matricule, firstName, lastName, email, password } = req.body;
 
-    // Crypter le mot de passe avec bcrypt
-     bcrypt.hash(password, saltRounds, function(err, hash) {
-      const query = 'INSERT INTO administrateur (MATRICULEADMIN, NOMADMIN, PRENOMADMIN, EMAILADMIN, PASSWARDADMIN, PHOTOADMIN) VALUES (?, ?, ?, ?, ?, ?)';
-    
-      connection.query(query, [
-        matricule,
-        firstName,
-        lastName,
-        email,
-        hash, // Utiliser le mot de passe crypté
-        req.files.image ? req.files.image[0].filename : null,
-      ], (error, results) => {
-        if (error) {
-          console.error('Erreur lors de la création du rapport :', error);
-          res.status(500).json({ error: 'Erreur lors de la création de l\'administrateur' });
-          return;
-        }
-        res.json({ message: 'Administrateur créé avec succès' });
-      });
-  });
+    try {
+      // Hachage du mot de passe
+      const hash = await bcrypt.hash(password, saltRounds);
+      const photoName = req.file ? req.file.filename : null;
 
-   
+      // Requête SQL (Notez l'utilisation de pool.execute ou pool.query)
+      const query = `
+        INSERT INTO administrateur 
+        (MATRICULEADMIN, NOMADMIN, PRENOMADMIN, EMAILADMIN, PASSWARDADMIN, PHOTOADMIN) 
+        VALUES (?, ?, ?, ?, ?, ?)`;
+
+      await pool.query(query, [
+        matricule,
+        lastName,
+        firstName,
+        email,
+        hash,
+        photoName
+      ]);
+
+      res.status(201).json({ message: 'Administrateur créé avec succès' });
+    } catch (error) {
+      console.error('Erreur de création:', error);
+      res.status(500).json({ error: 'Erreur lors de la création de l\'administrateur' });
+    }
   });
 };
 
-// Vérification des informations de connexion
-exports.login = (connection, req, res) => {
+// --- 2. CONNEXION (LOGIN) ---
+exports.login = async (pool, req, res) => {
+  const { email, password } = req.body;
 
-  async function checkUser(email, password) {
-    // Vérifier si l'email et le mot de passe sont fournis
-    if (!email || !password) {
-      res.status(400).json({ error: 'Adresse e-mail et mot de passe requis' });
-      return;
-    }
-
-    // Requête pour récupérer les informations de l'utilisateur
-    const query = 'SELECT MATRICULEADMIN, NOMADMIN, PRENOMADMIN, EMAILADMIN, PASSWARDADMIN, PHOTOADMIN FROM administrateur WHERE EMAILADMIN = ?';
-
-    // Exécution de la requête
-    connection.query(query, [email], async (error, results) => {
-      if (error) {
-        console.error('Erreur lors de la connexion à l\'Interface administrateur :', error);
-        res.status(500).json({ error: 'Erreur lors de la connexion à l\'Interface administrateur' });
-        return;
-      }
-
-      // Vérifier si l'utilisateur est trouvé
-      if (results.length === 0) {
-        console.log('Informations de connexion invalides');
-        res.status(401).json({ error: 'Informations de connexion invalides' });
-        return;
-      }
-
-      // Comparer le mot de passe
-      const match = await bcrypt.compare(password, results[0].PASSWARDADMIN);
-      
-      if (match) {
-        // Connexion réussie
-        console.log('Connexion établie !!!');
-        res.json(results[0]);
-      } else {
-        // Mot de passe incorrect
-        console.log('Erreur d\'authentification de mot de passe');
-        res.status(401).json({ error: 'Informations de connexion invalides' });
-      }
-    });
+  // Validation des champs (correspond au frontend React)
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Adresse e-mail et mot de passe requis' });
   }
 
-  // Appel de la fonction de vérification de l'utilisateur
-  checkUser(req.body.email, req.body.password);
+  try {
+    // 1. Chercher l'admin par email (EMAILADMIN)
+    const query = 'SELECT * FROM administrateur WHERE EMAILADMIN = ?';
+    const [results] = await pool.query(query, [email]);
+
+    // 2. Vérifier si l'utilisateur existe
+    if (results.length === 0) {
+      console.log(`Tentative échouée pour : ${email}`);
+      return res.status(401).json({ error: 'Identifiants incorrects' });
+    }
+
+    const admin = results[0];
+
+    // 3. Comparer le mot de passe haché (PASSWARDADMIN)
+    const match = await bcrypt.compare(password, admin.PASSWARDADMIN);
+
+    if (match) {
+      console.log('✅ Connexion établie pour:', admin.NOMADMIN, admin.PRENOMADMIN);
+      console.log('✅ E_mail:', admin.EMAILADMIN);
+
+      // 4. Génération d'un Token JWT (Optionnel mais recommandé pour la sécurité)
+      const token = jwt.sign(
+        { id: admin.MATRICULEADMIN, email: admin.EMAILADMIN },
+        process.env.JWT_SECRET, // Assurez-vous d'avoir JWT_SECRET dans votre .env
+        { expiresIn: '10h' }
+      );
+
+      // Affichage du token pour le debug (à retirer en production)
+      console.log('Token JWT généré:', token);
+
+      // 5. Réponse structurée pour le frontend
+      return res.json({
+        message: 'Connexion réussie',
+        token: token,
+        user: {
+          matricule: admin.MATRICULEADMIN,
+          nom: admin.NOMADMIN,
+          prenom: admin.PRENOMADMIN,
+          email: admin.EMAILADMIN,
+          photo: admin.PHOTOADMIN
+        }
+      });
+    } else {
+      console.log('❌ Mot de passe incorrect');
+      return res.status(401).json({ error: 'Identifiants incorrects' });
+    }
+  } catch (error) {
+    console.error('Erreur Serveur Login:', error);
+    return res.status(500).json({ error: 'Erreur lors de la connexion' });
+  }
 };

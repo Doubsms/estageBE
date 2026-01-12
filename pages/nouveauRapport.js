@@ -1,111 +1,91 @@
-const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid'); // Importation de la fonction uuid
-const fs = require('fs');
-const router = express.Router();
+const { v4: uuidv4 } = require('uuid');
+const fs = require('fs').promises; // Utilisation de la version Promise de fs
 
-// Configuration de Multer pour le stockage des fichiers
+// Configuration de Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Dossier où les fichiers seront stockés
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    // Générer un nom de fichier unique avec UUID et conserver l'extension d'origine
     const uniqueName = uuidv4() + path.extname(file.originalname);
-    cb(null, uniqueName); 
+    cb(null, uniqueName);
   }
 });
 
 const upload = multer({ storage });
+const handleFileUpload = upload.fields([{ name: 'fichierRapport', maxCount: 1 }]);
 
-// Middleware pour le téléchargement des fichiers
-const handleFileUpload = upload.fields([
-  { name: 'fichierRapport', maxCount: 1 },
-]);
-
-// Créer un nouveau rapport de stage
-exports.create = (connection, req, res) => {
-    handleFileUpload(req, res, (err) => {
-      if (err) {
-        console.error('Erreur lors du téléchargement des fichier :', err);
-        res.status(500).json({ error: 'Erreur lors du téléchargement du fichier' });
-        return;
-      }
-  
-      const { matriculeStagiaire,  commentaire, theme, fichierRapport} = req.body;
-      const query = 'INSERT INTO rapport (MATRICULE, COMMENTAIRE, THEME, FICHIER) VALUES (?, ?, ?, ?)';
-      
-      connection.query(query, [
-        matriculeStagiaire,
-        commentaire,
-        theme,
-        req.files.fichierRapport ? req.files.fichierRapport[0].filename : null,
-       
-      ], (error, results) => {
-        if (error) {
-          console.error('Erreur lors de la création du rapport :', error);
-          res.status(500).json({ error: 'Erreur lors de la création du rapport' });
-          return;
-        }
-        res.json({ message: 'rapport créé avec succès' });
-      });
-    });
-  };
- 
-  // modifier rapport de stage
-exports.update = (connection, req, res) => {
-  handleFileUpload(req, res, (err) => {
+// --- 1. CRÉER UN NOUVEAU RAPPORT ---
+exports.create = async (pool, req, res) => {
+  // Utilisation de la fonction d'upload (Multer n'est pas nativement Promise-based)
+  upload.fields([{ name: 'fichierRapport', maxCount: 1 }])(req, res, async (err) => {
     if (err) {
-      console.error('Erreur lors du téléchargement des fichiers :', err);
-      res.status(500).json({ error: 'Erreur lors du téléchargement du fichier' });
-      return;
+      console.error('Erreur Multer:', err);
+      return res.status(500).json({ error: 'Erreur lors du téléchargement du fichier' });
     }
 
-    const { matriculeStagiaire, commentaire, theme, fichierRapport } = req.body;
-    const querySelect = 'SELECT FICHIER FROM rapport WHERE MATRICULE = ?';
+    try {
+      const { matriculeStagiaire, commentaire, theme } = req.body;
+      const filename = req.files.fichierRapport ? req.files.fichierRapport[0].filename : null;
 
-    // 1. Récupérer le nom de l'ancien fichier
-    connection.query(querySelect, [matriculeStagiaire], (selectError, selectResults) => {
-      if (selectError) {
-        console.error('Erreur lors de la récupération de l\'ancien rapport :', selectError);
-        res.status(500).json({ error: 'Erreur lors de la récupération de l\'ancien rapport' });
-        return;
+      const query = 'INSERT INTO rapport (MATRICULE, COMMENTAIRE, THEME, FICHIER) VALUES (?, ?, ?, ?)';
+      await pool.query(query, [matriculeStagiaire, commentaire, theme, filename]);
+
+      res.json({ message: 'Rapport créé avec succès' });
+    } catch (error) {
+      console.error('Erreur SQL Create Rapport:', error);
+      res.status(500).json({ error: 'Erreur lors de la création du rapport' });
+    }
+  });
+};
+
+// --- 2. MODIFIER UN RAPPORT (AVEC SUPPRESSION DE L'ANCIEN FICHIER) ---
+exports.update = async (pool, req, res) => {
+  upload.fields([{ name: 'fichierRapport', maxCount: 1 }])(req, res, async (err) => {
+    if (err) {
+      console.error('Erreur Multer:', err);
+      return res.status(500).json({ error: 'Erreur lors du téléchargement du fichier' });
+    }
+
+    const { matriculeStagiaire, commentaire, theme } = req.body;
+
+    try {
+      // 1. Récupérer l'ancien nom de fichier en base de données
+      const [rows] = await pool.query('SELECT FICHIER FROM rapport WHERE MATRICULE = ?', [matriculeStagiaire]);
+
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Aucun rapport trouvé pour ce matricule' });
       }
 
-      if (selectResults.length === 0) {
-        res.status(404).json({ error: 'Aucun rapport trouvé pour ce matricule' });
-        return;
-      }
+      const ancienFichier = rows[0].FICHIER;
 
-      const ancienFichier = selectResults[0].FICHIER;
-      const cheminAncienFichier = path.join(__dirname, 'uploads', ancienFichier);
-
-      // 2. Supprimer l'ancien rapport
-      fs.unlink(cheminAncienFichier, (unlinkError) => {
-        if (unlinkError) {
-          console.error('Erreur lors de la suppression de l\'ancien fichier :', unlinkError);
-          res.status(500).json({ error: 'Erreur lors de la suppression de l\'ancien fichier' });
-          return;
+      // 2. Si un nouveau fichier est téléchargé, on tente de supprimer l'ancien du serveur
+      if (req.files.fichierRapport && ancienFichier) {
+        // Construction du chemin (attention au dossier parent si ce fichier est dans /controllers)
+        const cheminAncienFichier = path.join(__dirname, '..', 'uploads', ancienFichier);
+        
+        try {
+          await fs.unlink(cheminAncienFichier);
+          console.log(`Ancien fichier supprimé : ${ancienFichier}`);
+        } catch (unlinkError) {
+          // On logge l'erreur mais on ne bloque pas la mise à jour SQL
+          console.warn('Le fichier physique n’existait peut-être plus sur le disque.');
         }
+      }
 
-        // 3. Mettre à jour le rapport
-        const queryUpdate = 'UPDATE rapport SET COMMENTAIRE = ?, THEME = ?, FICHIER = ? WHERE MATRICULE = ?';
-        connection.query(queryUpdate, [
-          commentaire,
-          theme,
-          req.files.fichierRapport ? req.files.fichierRapport[0].filename : null,
-          matriculeStagiaire
-        ], (updateError, updateResults) => {
-          if (updateError) {
-            console.error('Erreur lors de la mise à jour du rapport :', updateError);
-            res.status(500).json({ error: 'Erreur lors de la mise à jour du rapport' });
-            return;
-          }
+      // 3. Mettre à jour les données en base de données
+      const nouveauFichier = req.files.fichierRapport ? req.files.fichierRapport[0].filename : ancienFichier;
+      
+      const queryUpdate = 'UPDATE rapport SET COMMENTAIRE = ?, THEME = ?, FICHIER = ? WHERE MATRICULE = ?';
+      await pool.query(queryUpdate, [commentaire, theme, nouveauFichier, matriculeStagiaire]);
 
-          res.json({ message: 'Rapport mis à jour avec succès' });
-        });
-      });
-    });
+      res.json({ message: 'Rapport mis à jour avec succès' });
+
+    } catch (error) {
+      console.error('Erreur SQL Update Rapport:', error);
+      res.status(500).json({ error: 'Erreur lors de la mise à jour du rapport' });
+    }
   });
 };
