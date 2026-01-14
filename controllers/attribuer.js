@@ -33,6 +33,8 @@ exports.getByMatriculesAndDossier = async (pool, req, res) => {
 exports.create = async (pool, req, res) => {
   const { adminemail, selectedSupervisor, dossier } = req.body;
 
+  console.log('Données reçues pour la création de l\'attribution :', { adminemail, selectedSupervisor, dossier });
+
   try {
     // Étape 1 : Récupérer le matricule de l'administrateur
     const getAdminQuery = 'SELECT MATRICULEADMIN FROM administrateur WHERE EMAILADMIN = ?';

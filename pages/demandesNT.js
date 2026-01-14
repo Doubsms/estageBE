@@ -10,6 +10,7 @@ console.log(req.admin);
            e.ETABLISSEMENT,
            e.EMAIL,
            DATE_FORMAT(d.DATEDEBUTDESEANCE, '%d/%m/%Y') AS DATEDEBUTDESEANCE,
+           DATE_FORMAT(d.DATEFINDESEANCE, '%d/%m/%Y') AS DATEFINDESEANCE,
            d.NUMERODEDOSSIER,
            d.CNI,
            d.CERTIFICAT,

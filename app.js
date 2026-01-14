@@ -18,6 +18,7 @@ const dossierController = require('./controllers/dossier');
 const encadreurController = require('./controllers/encadreur.js');
 const etudiantController = require('./controllers/etudiant');
 const studentInfoNT = require('./pages/demandesNT.js');
+const studentInfoAccepte = require('./pages/stagiairesAcceptes.js');
 const studentInfoActuel = require('./pages/stagiairesActuels.js');
 const envoiMail = require('./pages/traitement.js');
 const dashboardRouter = require('./pages/dashboard.js');
@@ -108,9 +109,9 @@ app.get('/verify-token', authenticateToken, (req, res) => etudiantController.get
 app.use('/mail', authenticateToken, envoiMail);
 
 // --- ATTRIBUTIONS (protégé) ---
+app.post('/attributions', authenticateToken, (req, res) => attribuerController.create(pool, req, res));
 app.get('/attributions', authenticateToken, (req, res) => attribuerController.getAll(pool, req, res));
 app.get('/attributions/:matriculeCharge/:matriculeEncadreur', authenticateToken, (req, res) => attribuerController.getByMatricules(pool, req, res));
-app.post('/attributions', authenticateToken, (req, res) => attribuerController.create(pool, req, res));
 app.delete('/attributions/:matriculeCharge/:matriculeEncadreur', authenticateToken, (req, res) => attribuerController.delete(pool, req, res));
 
 // --- CHARGÉS DE STAGE (protégé) ---
@@ -123,7 +124,7 @@ app.delete('/charge_de_stage/:id', authenticateToken, (req, res) => chargeDeStag
 // --- DOSSIERS (protégé) ---
 app.get('/dossiers', authenticateToken, (req, res) => dossierController.getAll(pool, req, res));
 app.get('/dossiers/:id', authenticateToken, (req, res) => dossierController.getById(pool, req, res));
-app.post('/dossiers', authenticateToken, (req, res) => dossierController.create(pool, req, res));
+app.post('/dossiers', (req, res) => dossierController.create(pool, req, res));
 app.put('/dossiers/:id', authenticateToken, (req, res) => dossierController.update(pool, req, res));
 app.delete('/dossiers/:id', authenticateToken, (req, res) => dossierController.delete(pool, req, res));
 
@@ -137,14 +138,14 @@ app.delete('/encadreurs/:id', authenticateToken, (req, res) => encadreurControll
 // --- ÉTUDIANTS (protégé) ---
 app.get('/etudiants', authenticateToken, (req, res) => etudiantController.getAll(pool, req, res));
 app.get('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.getByMatricule(pool, req, res));
-app.post('/etudiants', authenticateToken, (req, res) => etudiantController.create(pool, req, res));
+app.post('/etudiants', (req, res) => etudiantController.create(pool, req, res));
 app.put('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.update(pool, req, res));
 app.delete('/etudiants/:matricule', authenticateToken, (req, res) => etudiantController.delete(pool, req, res));
 
 // --- GESTION DES STAGES & DASHBOARD (protégé) ---
 app.get('/demandesNT', authenticateToken, (req, res) => studentInfoNT.getDemandesNT(pool, req, res));
 app.get('/stagiaresActuel', authenticateToken, (req, res) => studentInfoActuel.getStagiaresActuels(pool, req, res));
-app.get('/stagiaresAccepte', authenticateToken, (req, res) => studentInfoActuel.getStagiaresAccepte(pool, req, res));
+app.get('/stagiaresAccepte', authenticateToken, (req, res) => studentInfoAccepte.getStagiaresAccepte(pool, req, res));
 app.put('/theme', authenticateToken, (req, res) => studentInfoActuel.updateTheme(pool, req, res));
 
 // Dashboard (protégé)
