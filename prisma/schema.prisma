@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model administrateur {
+  IDADMIN        Int           @id @default(autoincrement())
+  MATRICULEADMIN String        @unique(map: "MATRICULEADMIN") @db.VarChar(255)
+  NOMADMIN       String        @db.VarChar(255)
+  PRENOMADMIN    String        @db.VarChar(255)
+  EMAILADMIN     String        @db.VarChar(255)
+  PASSWARDADMIN  String        @db.VarChar(255)
+  PHOTOADMIN     String        @db.VarChar(255)
+  affectation    affectation[]
+}
+
+model affectation {
+  IDADMIN        Int
+  IDENCADREUR    Int
+  IDDOSSIER      Int
+  IDSTRUCTURE    Int
+  administrateur administrateur @relation(fields: [IDADMIN], references: [IDADMIN], onUpdate: Restrict, map: "affectation_ibfk_1")
+  encadreur      encadreur      @relation(fields: [IDENCADREUR], references: [IDENCADREUR], onUpdate: Restrict, map: "affectation_ibfk_2")
+  dossier        dossier        @relation(fields: [IDDOSSIER], references: [IDDOSSIER], onUpdate: Restrict, map: "affectation_ibfk_3")
+  structures     structures     @relation(fields: [IDSTRUCTURE], references: [IDSTRUCTURE], onUpdate: Restrict, map: "affectation_ibfk_4")
+
+  @@id([IDADMIN, IDENCADREUR, IDDOSSIER, IDSTRUCTURE])
+  @@index([IDDOSSIER], map: "FK_AFFECTATION_DOSSIER")
+  @@index([IDENCADREUR], map: "FK_AFFECTATION_ENCADREUR")
+  @@index([IDSTRUCTURE], map: "FK_AFFECTATION_STRUCTURE")
+}
+
+model dossier {
+  IDDOSSIER            Int           @id @default(autoincrement())
+  MATRICULEETUDIANT    String?       @db.VarChar(255)
+  DATEDEBUTDESEANCE    DateTime?     @db.Date
+  DATEFINDESEANCE      DateTime?     @db.Date
+  ETAT                 String?       @db.Text
+  THEME                String?       @db.VarChar(500)
+  CNI                  String        @db.VarChar(255)
+  CERTIFICAT           String        @db.VarChar(255)
+  LETTREMOTIVATION     String        @db.VarChar(255)
+  LETTRERECOMMENDATION String        @db.VarChar(255)
+  PHOTOPROFIL          String        @db.VarChar(255)
+  DATEDEPOT            DateTime      @default(now()) @db.Timestamp(0)
+  EMAILSENT            Boolean?      @default(false)
+  affectation          affectation[]
+  etudiant             etudiant?     @relation(fields: [MATRICULEETUDIANT], references: [MATRICULEETUDIANT], onDelete: Restrict, onUpdate: Restrict, map: "dossier_ibfk_1")
+
+  @@index([MATRICULEETUDIANT], map: "FK_DEPOSER")
+}
+
+model encadreur {
+  IDENCADREUR        Int           @id @default(autoincrement())
+  MATRICULEENCADREUR String        @unique(map: "MATRICULEENCADREUR") @db.VarChar(255)
+  NOMENCADREUR       String?       @db.VarChar(255)
+  PRENOMENCADREUR    String?       @db.VarChar(255)
+  IDSTRUCTURE        Int?
+  POSTE              String?       @db.VarChar(255)
+  affectation        affectation[]
+  structures         structures?   @relation(fields: [IDSTRUCTURE], references: [IDSTRUCTURE], onDelete: Restrict, onUpdate: Restrict, map: "encadreur_ibfk_1")
+
+  @@index([IDSTRUCTURE], map: "IDSTRUCTURE")
+}
+
+model etudiant {
+  MATRICULEETUDIANT String    @id @db.VarChar(255)
+  NOMETUDIANT       String?   @db.VarChar(255)
+  PRENOMETUDIANT    String?   @db.VarChar(255)
+  ETABLISSEMENT     String?   @db.VarChar(255)
+  VILLERESIDENCE    String?   @db.VarChar(255)
+  PARCOURS          String?   @db.VarChar(255)
+  NIVEAU            String?   @db.VarChar(255)
+  EMAIL             String    @db.Text
+  TEL               String    @db.VarChar(255)
+  FILIERE           String    @db.VarChar(255)
+  SEXE              String    @db.Text
+  DATE              DateTime  @default(now()) @db.Timestamp(0)
+  dossier           dossier[]
+  rapport           rapport[]
+}
+
+model logs_actions {
+  id               Int       @id @default(autoincrement())
+  user_email       String?   @db.VarChar(255)
+  user_name        String?   @db.VarChar(255)
+  action           String?   @db.VarChar(255)
+  methode_http     String?   @db.VarChar(10)
+  endpoint         String?   @db.VarChar(500)
+  requete_executee String?   @db.Text
+  ip_address       String?   @db.VarChar(45)
+  user_agent       String?   @db.Text
+  status_code      Int?
+  horodatage       DateTime? @default(now()) @db.DateTime(0)
+
+  @@index([action], map: "idx_action")
+  @@index([horodatage], map: "idx_horodatage")
+  @@index([user_email], map: "idx_user_email")
+}
+
+model rapport {
+  IDDOSSIER   Int      @id @default(autoincrement())
+  MATRICULE   String   @db.VarChar(30)
+  COMMENTAIRE String   @db.VarChar(50)
+  THEME       String   @db.VarChar(255)
+  FICHIER     String   @db.VarChar(255)
+  DATE        DateTime @default(now()) @db.Timestamp(0)
+  etudiant    etudiant @relation(fields: [MATRICULE], references: [MATRICULEETUDIANT], onUpdate: Restrict, map: "rapport_ibfk_1")
+
+  @@index([MATRICULE], map: "MATRICULE")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model structures {
+  IDSTRUCTURE      Int           @id @default(autoincrement())
+  NOMSTRUCTURE     String        @db.VarChar(255)
+  ABBREVIATION     String        @db.VarChar(50)
+  IDPARENT         Int?
+  affectation      affectation[]
+  encadreur        encadreur[]
+  structures       structures?   @relation("structuresTostructures", fields: [IDPARENT], references: [IDSTRUCTURE], onDelete: Restrict, onUpdate: Restrict, map: "structures_ibfk_1")
+  other_structures structures[]  @relation("structuresTostructures")
+
+  @@index([IDPARENT], map: "IDPARENT")
+}

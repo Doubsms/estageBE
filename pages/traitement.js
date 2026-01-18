@@ -1,60 +1,130 @@
-const mail = require('../fonctionalites/mail');
-const express = require('express');
-const router = express.Router();
+const nodemailer = require('nodemailer');
 
-// Route pour accepter ou rejeter une demande
-router.post('/decision', async (req, res) => {
-    const { decision, nom, adresseEmail, NUMERODEDOSSIER } = req.body;
-    const pool = req.app.get('connection'); // Récupération du pool de promesses
-
-    console.log('Traitement de la décision:', { decision, nom, adresseEmail, NUMERODEDOSSIER });
-
-    // 1. Validation et préparation des messages
-    let subject;
-    let text;
-    let etat;
-
-    if (decision === 'accepté') {
-        subject = 'Institut National de la Statistique (Service des Stages)';
-        text = `Cher(e) ${nom},\n\nNous avons le plaisir de vous informer que votre demande de stage à l'Institut National de la Statistique a été acceptée. Veuillez vous rapprocher de l'institut pour les modalités pratiques.`;
-        etat = 'accepté';
-    } else if (decision === 'rejeté') {
-        subject = 'Institut National de la Statistique (Service des Stages)';
-        text = `Cher(e) ${nom},\n\nNous regrettons de vous informer que votre demande n'a pas pu être retenue pour cette période. Nous vous remercions de l'intérêt porté à notre institution.`;
-        etat = 'rejeté';
-    } else {
-        return res.status(400).json({ error: 'Décision non valide' });
-    }
-
-    try {
-        // 2. Mise à jour de l'état en base de données avec await
-        const query = 'UPDATE dossier SET ETAT = ? WHERE NUMERODEDOSSIER = ?';
-        const [results] = await pool.query(query, [etat, NUMERODEDOSSIER]);
-
-        if (results.affectedRows === 0) {
-            console.log('Dossier non trouvé:', NUMERODEDOSSIER);
-            return res.status(404).json({ error: 'Dossier non trouvé' });
-        }
-
-        console.log(`État du dossier ${NUMERODEDOSSIER} mis à jour : ${etat}`);
-
-        // 3. Envoi de l'e-mail
-        // On attend que l'envoi soit réussi avant de répondre au client
-        await mail.sendEmail(adresseEmail, subject, text);
-        
-        console.log('E-mail envoyé avec succès à:', adresseEmail);
-        res.json({ message: `Dossier ${etat} et e-mail envoyé avec succès` });
-
-    } catch (error) {
-        // Gestion centralisée des erreurs (SQL ou Mail)
-        console.error('Erreur lors du traitement de la décision:', error);
-        
-        if (error.code === 'ECONNREFUSED' || error.command === 'CONN') {
-            return res.status(500).json({ error: 'Erreur de connexion au service de mail' });
-        }
-        
-        res.status(500).json({ error: 'Une erreur est survenue lors du traitement' });
-    }
+// Configuration email
+const transporter = nodemailer.createTransport({
+  host: 'smtp.office365.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  auth: {
+    user: 'inscameroun@outlook.com',
+    pass: 'Doubsms2004'
+  }
 });
 
-module.exports = router;
+// Fonction d'envoi d'email
+async function sendEmail(to, subject, text) {
+  const mailOptions = {
+    from: '"Institut National de la Statistique" <inscameroun@outlook.com>',
+    to: to,
+    subject: subject,
+    text: text,
+  };
+  
+  return await transporter.sendMail(mailOptions);
+}
+
+exports.affectation = async (req, res) => {
+  try {
+    const {
+      decision,
+      adminemail,
+      selectedSupervisor,
+      dossier,
+      IDSTRUCTURE,
+      structureName,
+      supervisorName,
+      adresseEmail,
+      nom
+    } = req.body;
+    
+    // Validation
+    if (!decision || !dossier || !adminemail) {
+      return res.status(400).json({ success: false, error: 'Champs manquants' });
+    }
+    
+    const admin = await req.prisma.administrateur.findFirst({
+      where: { EMAILADMIN: adminemail }
+    });
+    
+    if (!admin) {
+      return res.status(404).json({ success: false, error: 'Admin non trouvé' });
+    }
+    
+    const dossierNum = parseInt(dossier, 10);
+    
+    // 1. Mise à jour de l'état du dossier (sans toucher à EMAILSENT)
+    await req.prisma.dossier.update({
+      where: { IDDOSSIER: dossierNum },
+      data: { ETAT: decision }
+    });
+    
+    // 2. Si acceptation, créer l'affectation
+    if (decision === 'accepté') {
+      const encadreur = await req.prisma.encadreur.findFirst({
+        where: { MATRICULEENCADREUR: selectedSupervisor }
+      });
+      
+      if (!encadreur) {
+        return res.status(404).json({ success: false, error: 'Encadreur non trouvé' });
+      }
+      
+      await req.prisma.affectation.create({
+        data: {
+          IDADMIN: admin.IDADMIN,
+          IDENCADREUR: encadreur.IDENCADREUR,
+          IDDOSSIER: dossierNum,
+          IDSTRUCTURE: parseInt(IDSTRUCTURE, 10)
+        }
+      });
+    }
+    
+    // 3. ENVOI EMAIL ET GESTION DE EMAILSENT
+    let emailSent = false;
+    
+    if (adresseEmail && nom) {
+      const subject = 'Institut National de la Statistique';
+      const text = decision === 'accepté'
+        ? `Cher(e) ${nom}, demande acceptée. Structure: ${structureName}, Encadreur: ${supervisorName}`
+        : `Cher(e) ${nom}, demande non retenue.`;
+      
+      try {
+        // TENTATIVE D'ENVOI
+        await sendEmail(adresseEmail, subject, text);
+        
+        // ✅ SEULEMENT SI RÉUSSI : mettre EMAILSENT à true
+        await req.prisma.dossier.update({
+          where: { IDDOSSIER: dossierNum },
+          data: { EMAILSENT: true }
+        });
+        
+        emailSent = true;
+        console.log('Email envoyé et EMAILSENT = true');
+        
+      } catch (emailError) {
+        // ❌ EMAILSENT n'est PAS modifié
+        console.log('Email échoué, EMAILSENT non modifié');
+      }
+    }
+    
+    // Récupérer l'état final
+    const dossierFinal = await req.prisma.dossier.findUnique({
+      where: { IDDOSSIER: dossierNum },
+      select: { EMAILSENT: true }
+    });
+    
+    // Réponse
+    res.json({
+      success: true,
+      message: `Dossier ${decision}`,
+      dossierId: dossierNum,
+      decision,
+      emailSent, // true seulement si email réussi
+      dossierEmailSent: dossierFinal?.EMAILSENT || false // valeur réelle
+    });
+    
+  } catch (error) {
+    console.error('Erreur:', error.message);
+    res.status(500).json({ success: false, error: 'Erreur traitement' });
+  }
+};

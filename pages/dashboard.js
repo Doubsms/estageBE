@@ -3,185 +3,276 @@ const router = express.Router();
 
 // 1. Endpoint pour récupérer les compteurs (Cards du dashboard)
 router.get('/dashboard-data', async (req, res) => {
-  const pool = req.app.get('connection');
-
   try {
-    // On lance les 3 requêtes en parallèle pour plus de performance
-    const [acceptedRes] = await pool.query("SELECT COUNT(*) AS currentInterns FROM dossier WHERE etat = 'accepté' AND DATEDEBUTDESEANCE <= CURDATE() AND DATEFINDESEANCE >= CURDATE()");
-    const [pendingRes] = await pool.query("SELECT COUNT(*) AS pendingRequests FROM dossier WHERE etat = 'non traité'");
-    const [totalStaffRes] = await pool.query("SELECT COUNT(*) AS totalStaff FROM etudiant");
-    const [totalReport] = await pool.query("SELECT COUNT(*) AS totalReport FROM rapport");
-    const [totalEncadreur] = await pool.query("SELECT COUNT(*) AS totalEncadreur FROM encadreur");
-    const [anneePlusActif] = await pool.query("SELECT YEAR(DATEDEBUTDESEANCE) AS annee, COUNT(*) AS total_stagiaires FROM dossier WHERE ETAT = 'accepté' GROUP BY annee ORDER BY total_stagiaires DESC LIMIT 1");
-    const [totalAdminis] = await pool.query("SELECT COUNT(*) AS totalAdminis FROM administrateur");
+    // On lance les requêtes en parallèle pour plus de performance
+    const [
+      currentInterns,
+      pendingRequests,
+      totalStaff,
+      totalReport,
+      totalEncadreur,
+      anneePlusActif,
+      totalAdminis,
+      totalRequests,  // CORRECTION: 'totalrequests' → 'totalRequests' (camelCase)
+    ] = await Promise.all([
+      // 1. Stagiaires actuellement en stage
+      req.prisma.dossier.count({
+        where: {
+          ETAT: 'accepté',
+          DATEDEBUTDESEANCE: { 
+            lte: new Date() 
+          },
+          DATEFINDESEANCE: { 
+            gte: new Date() 
+          }
+        }
+      }),
+
+      // 2. Demandes en attente
+      req.prisma.dossier.count({
+        where: { 
+          ETAT: 'non traité'
+        }
+      }),
+      
+      // 3. Total des étudiants
+      req.prisma.etudiant.count(),
+      
+      // 4. Total des rapports
+      req.prisma.rapport.count(),
+      
+      // 5. Total des encadreurs
+      req.prisma.encadreur.count(),
+      
+      // 6. Année la plus active
+      (async () => {
+        try {
+          // Utilisation de $queryRaw pour la requête GROUP BY
+          // CORRECTION: vérifier si vous utilisez MySQL ou PostgreSQL
+          const result = await req.prisma.$queryRaw`
+            SELECT 
+              YEAR(	DATEDEPOT) AS annee, 
+              COUNT(*) AS total_stagiaires 
+            FROM Dossier  -- CORRECTION: nom de la table avec majuscule si nécessaire
+            WHERE DATEDEBUTDESEANCE IS NOT NULL
+            GROUP BY YEAR(DATEDEPOT) 
+            ORDER BY total_stagiaires DESC 
+            LIMIT 1
+          `;
+          
+          // Vérification et conversion
+          if (result && Array.isArray(result) && result.length > 0) {
+            const annee = result[0].annee;
+            return annee ? Number(annee) : null;
+          }
+          return null;
+        } catch (error) {
+          console.error('Erreur dans la requête anneePlusActif:', error);
+          return null;
+        }
+      })(),
+      
+      // 7. Total des administrateurs
+      req.prisma.administrateur.count(),
+
+      // 8. Total Demandes reçues à l'INS
+      // CORRECTION: 'dossiers' → 'dossier' (singulier selon votre modèle)
+      req.prisma.dossier.count()  // CORRECTION: retirer le 's'
+
+    ]);
 
     const data = {
-      currentInterns: acceptedRes[0].currentInterns,
-      pendingRequests: pendingRes[0].pendingRequests,
-      totalStaff: totalStaffRes[0].totalStaff,
-      totalReport: totalReport[0].totalReport,
-      totalEncadreur: totalEncadreur[0].totalEncadreur,
-      anneePlusActif: anneePlusActif[0].annee,
-      totalAdminis: totalAdminis[0].totalAdminis,
+      currentInterns: Number(currentInterns),
+      pendingRequests: Number(pendingRequests),
+      totalStaff: Number(totalStaff),
+      totalReport: Number(totalReport),
+      totalEncadreur: Number(totalEncadreur),
+      anneePlusActif,
+      totalAdminis: Number(totalAdminis),
+      totalrequests: Number(totalRequests),  // CORRECTION: variable nommée totalRequests
     };
 
+    console.log('📊 Dashboard data récupérée:', data);
     res.json(data);
   } catch (err) {
     console.error('Erreur dashboard-data:', err);
-    res.status(500).json({ error: 'Erreur lors de la récupération des statistiques' });
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des statistiques',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
 
-// 2. Endpoint pour récupérer les années disponibles
+// 2. Endpoint pour récupérer les années disponibles (version optimisée)
 router.get('/available-years', async (req, res) => {
-  const pool = req.app.get('connection');
-
   try {
-    // Récupérer les années distinctes depuis la table etudiant (date d'inscription)
-    const [yearsFromEtudiant] = await pool.query(`
-      SELECT DISTINCT YEAR(date) as year 
-      FROM etudiant 
-      WHERE date IS NOT NULL 
-      ORDER BY year DESC
-    `);
-
-    // Récupérer les années distinctes depuis la table dossier (date de début de séance)
-    const [yearsFromDossier] = await pool.query(`
-      SELECT DISTINCT YEAR(DATEDEBUTDESEANCE) as year 
-      FROM dossier 
-      WHERE DATEDEBUTDESEANCE IS NOT NULL 
-      ORDER BY year DESC
-    `);
-
-    // Fusionner et dédoublonner les années
-    const allYears = [
-      ...yearsFromEtudiant.map(row => row.year),
-      ...yearsFromDossier.map(row => row.year)
-    ].filter(year => year !== null);
-
-    const uniqueYears = [...new Set(allYears)].sort((a, b) => b - a);
-
-    // Toujours inclure l'année courante
     const currentYear = new Date().getFullYear();
-    if (!uniqueYears.includes(currentYear)) {
-      uniqueYears.unshift(currentYear);
+    let uniqueYears = [currentYear]; // Commencer avec l'année courante
+
+    try {
+      // Tentative avec raw SQL (plus efficace)
+      const yearsQuery = await req.prisma.$queryRaw`
+        SELECT DISTINCT year_value FROM (
+          SELECT YEAR(date) as year_value FROM etudiant WHERE date IS NOT NULL
+          UNION
+          SELECT YEAR(DATEDEBUTDESEANCE) as year_value FROM dossier WHERE DATEDEBUTDESEANCE IS NOT NULL
+        ) AS years
+        WHERE year_value IS NOT NULL
+        ORDER BY year_value DESC
+      `;
+
+      if (yearsQuery && yearsQuery.length > 0) {
+        const sqlYears = yearsQuery.map(row => Number(row.year_value)).filter(y => !isNaN(y));
+        
+        // Fusionner avec l'année courante
+        uniqueYears = [...new Set([currentYear, ...sqlYears])].sort((a, b) => b - a);
+      }
+    } catch (sqlError) {
+      console.log('⚠️ Raw SQL non disponible, utilisation de l\'alternative...');
+      
+      // Alternative sans raw SQL
+      const [etudiants, dossiers] = await Promise.all([
+        req.prisma.etudiant.findMany({
+          select: { DATE: true },
+          where: { DATE: { not: null } }
+        }),
+        req.prisma.dossier.findMany({
+          select: { DATEDEBUTDESEANCE: true },
+          where: { DATEDEBUTDESEANCE: { not: null } }
+        })
+      ]);
+
+      const yearsSet = new Set([currentYear]);
+      
+      etudiants.forEach(e => {
+        if (e.DATE) yearsSet.add(new Date(e.DATE).getFullYear());
+      });
+      
+      dossiers.forEach(d => {
+        if (d.DATEDEBUTDESEANCE) yearsSet.add(new Date(d.DATEDEBUTDESEANCE).getFullYear());
+      });
+
+      uniqueYears = Array.from(yearsSet).sort((a, b) => b - a);
     }
 
     res.json({
+      success: true,
       years: uniqueYears,
-      message: 'Années disponibles récupérées avec succès'
+      message: 'Années disponibles récupérées avec succès',
+      count: uniqueYears.length
     });
   } catch (err) {
     console.error('Erreur available-years:', err);
     res.status(500).json({ 
+      success: false,
       error: 'Erreur lors de la récupération des années disponibles',
-      years: [new Date().getFullYear()] // Retourner au moins l'année courante en cas d'erreur
+      years: [new Date().getFullYear()]
     });
   }
 });
 
-// 3. Endpoint pour le graphique avec filtre d'année
+// 3. Endpoint pour le graphique avec filtre d'année (abréviations 3 lettres)
 router.get('/dashboardgraphic', async (req, res) => {
-  const pool = req.app.get('connection');
   const { year } = req.query;
-  
-  // Utiliser l'année courante par défaut si non spécifiée
-  const targetYear = year || new Date().getFullYear();
+  const targetYear = parseInt(year) || new Date().getFullYear();
 
   try {
-    // Requête pour les demandes (table etudiant) avec filtre d'année
-    const [demandesResults] = await pool.query(`
-      SELECT 
-        DATE_FORMAT(date, '%b') AS name,
-        DATE_FORMAT(date, '%m') AS month_num,
-        COUNT(*) AS demandes
-      FROM etudiant
-      WHERE YEAR(date) = ?
-      GROUP BY DATE_FORMAT(date, '%b'), DATE_FORMAT(date, '%m')
-      ORDER BY month_num
-    `, [targetYear]);
-
-    // Requête pour les stagiaires acceptés (table dossier) avec filtre d'année
-    const [stagiairesResults] = await pool.query(`
-      SELECT 
-        DATE_FORMAT(DATEDEBUTDESEANCE, '%b') AS name,
-        DATE_FORMAT(DATEDEBUTDESEANCE, '%m') AS month_num,
-        COUNT(*) AS stagiaires
-      FROM dossier
-      WHERE ETAT = 'accepté' 
-        AND YEAR(DATEDEBUTDESEANCE) = ?
-      GROUP BY DATE_FORMAT(DATEDEBUTDESEANCE, '%b'), DATE_FORMAT(DATEDEBUTDESEANCE, '%m')
-      ORDER BY month_num
-    `, [targetYear]);
-
-    // Créer un objet map pour fusionner facilement
-    const monthData = {};
-    
-    // Initialiser tous les mois avec zéro
-    const months = [
-      { name: 'Jan', num: '01' },
-      { name: 'Feb', num: '02' },
-      { name: 'Mar', num: '03' },
-      { name: 'Apr', num: '04' },
-      { name: 'May', num: '05' },
-      { name: 'Jun', num: '06' },
-      { name: 'Jul', num: '07' },
-      { name: 'Aug', num: '08' },
-      { name: 'Sep', num: '09' },
-      { name: 'Oct', num: '10' },
-      { name: 'Nov', num: '11' },
-      { name: 'Dec', num: '12' }
+    // Abréviations des mois (3 premières lettres)
+    const moisAbrev = [
+      { name: 'Jan', num: 1 },
+      { name: 'Fév', num: 2 },
+      { name: 'Mar', num: 3 },
+      { name: 'Avr', num: 4 },
+      { name: 'Mai', num: 5 },
+      { name: 'Jui', num: 6 },
+      { name: 'Jui', num: 7 }, // Juillet aussi "Jui" (3 lettres)
+      { name: 'Aoû', num: 8 },
+      { name: 'Sep', num: 9 },
+      { name: 'Oct', num: 10 },
+      { name: 'Nov', num: 11 },
+      { name: 'Déc', num: 12 }
     ];
 
-    // Initialiser la structure
-    months.forEach(month => {
-      monthData[month.num] = {
-        name: month.name,
-        demandes: 0,
-        stagiaires: 0
+    const dataPromises = moisAbrev.map(async (mois) => {
+      // Dates de début et fin du mois
+      const startDate = new Date(targetYear, mois.num - 1, 1);
+      const endDate = new Date(targetYear, mois.num, 0); // Dernier jour du mois
+
+      // Compter les demandes pour ce mois
+      const demandes = await req.prisma.etudiant.count({
+        where: {
+          DATE: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      });
+
+      // Compter les stagiaires acceptés pour ce mois
+      const stagiaires = await req.prisma.dossier.count({
+        where: {
+          ETAT: 'accepté',
+          DATEDEBUTDESEANCE: {
+            gte: startDate,
+            lte: endDate
+          }
+        }
+      });
+
+      return {
+        name: mois.name,
+        demandes,
+        stagiaires,
+        monthNumber: mois.num
       };
     });
 
-    // Remplir avec les données des demandes
-    demandesResults.forEach(row => {
-      if (monthData[row.month_num]) {
-        monthData[row.month_num].demandes = row.demandes;
+    // Exécuter toutes les promesses en parallèle
+    const data = await Promise.all(dataPromises);
+
+    // Calculer les statistiques
+    const totalDemandes = data.reduce((sum, item) => sum + item.demandes, 0);
+    const totalStagiaires = data.reduce((sum, item) => sum + item.stagiaires, 0);
+    
+    let peakMonth = data[0];
+    let maxActivity = 0;
+    
+    data.forEach(item => {
+      const activity = item.demandes + item.stagiaires;
+      if (activity > maxActivity) {
+        maxActivity = activity;
+        peakMonth = item;
       }
     });
 
-    // Remplir avec les données des stagiaires
-    stagiairesResults.forEach(row => {
-      if (monthData[row.month_num]) {
-        monthData[row.month_num].stagiaires = row.stagiaires;
-      }
-    });
-
-    // Convertir en tableau pour le frontend
-    const data = months.map(month => monthData[month.num]);
-
-    // Ajouter des métadonnées
+    // Enrichir la réponse (optionnel)
     const response = {
       year: targetYear,
       data: data,
       summary: {
-        totalDemandes: data.reduce((sum, item) => sum + item.demandes, 0),
-        totalStagiaires: data.reduce((sum, item) => sum + item.stagiaires, 0),
-        peakMonth: data.reduce((max, item) => 
-          (item.demandes + item.stagiaires) > (max.demandes + max.stagiaires) ? item : data[0]
-        ).name
+        totalDemandes,
+        totalStagiaires,
+        peakMonth: peakMonth.name,
+        moisActifNumero: peakMonth.monthNumber,
+        conversionRate: totalDemandes > 0 ? 
+          ((totalStagiaires / totalDemandes) * 100).toFixed(1) + '%' : '0%'
       }
     };
 
-    res.json(response.data); // Retourner seulement les données pour compatibilité
+    // Retourner seulement les données pour compatibilité
+    res.json(response.data);
   } catch (err) {
     console.error('Erreur dashboardgraphic:', err);
     
-    // En cas d'erreur, retourner des données par défaut pour l'année demandée
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const defaultData = months.map(month => ({
-      name: month,
+    // Fallback avec abréviations (3 lettres)
+    const moisAbrev = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jui', 
+                       'Jui', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+    
+    const defaultData = moisAbrev.map((nomMois, index) => ({
+      name: nomMois,
       demandes: 0,
-      stagiaires: 0
+      stagiaires: 0,
+      monthNumber: index + 1
     }));
     
     res.json(defaultData);

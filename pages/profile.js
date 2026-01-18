@@ -1,5 +1,5 @@
 // Récupérer le profil de l'administrateur
-exports.getprofile = async (pool, req, res) => {
+exports.getprofile = async (req, res) => {
   const { adminemail } = req.body; 
 
   // Validation de l'entrée
@@ -7,29 +7,33 @@ exports.getprofile = async (pool, req, res) => {
     return res.status(400).json({ error: 'L\'email de l\'administrateur est requis' });
   }
 
-  const query = `
-    SELECT MATRICULEADMIN, NOMADMIN, PRENOMADMIN, EMAILADMIN, PHOTOADMIN 
-    FROM administrateur 
-    WHERE EMAILADMIN = ?
-  `;
-
   try {
-    // Exécution de la requête avec await
-    const [results] = await pool.query(query, [adminemail]);
+    // Rechercher l'administrateur avec Prisma
+    const adminData = await req.prisma.administrateur.findFirst({
+      where: { EMAILADMIN: adminemail },
+      select: {
+        MATRICULEADMIN: true,
+        NOMADMIN: true,
+        PRENOMADMIN: true,
+        EMAILADMIN: true,
+        PHOTOADMIN: true,
+        IDADMIN: true
+      }
+    });
 
-    if (results.length === 0) {
+    if (!adminData) {
       return res.status(404).json({ error: 'Administrateur non trouvé avec cet email' });
     }
 
-    // Récupération des données
-    const adminData = results[0];
-
     // Construction de l'URL complète pour la photo de profil
-    const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
+    const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
     
     const profile = {
       ...adminData,
-      PHOTOADMIN: adminData.PHOTOADMIN ? `${baseUrl}${adminData.PHOTOADMIN}` : null
+      PHOTOADMIN: adminData.PHOTOADMIN ? `${baseUrl}/uploads/${adminData.PHOTOADMIN}` : null,
+      // Ajout d'informations supplémentaires si besoin
+      FULL_NAME: `${adminData.NOMADMIN} ${adminData.PRENOMADMIN}`,
+      ROLE: 'Administrateur'
     };
 
     // Envoyer les données formatées en réponse
@@ -37,8 +41,15 @@ exports.getprofile = async (pool, req, res) => {
 
   } catch (error) {
     console.error('Erreur lors de la récupération du profil administrateur :', error);
+    
+    // Gestion des erreurs spécifiques de Prisma
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Administrateur non trouvé' });
+    }
+    
     return res.status(500).json({ 
-      error: 'Une erreur serveur est survenue lors de la récupération du profil' 
+      error: 'Une erreur serveur est survenue lors de la récupération du profil',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `dossier` ADD COLUMN `EMAILSENT` BOOLEAN NULL DEFAULT false;

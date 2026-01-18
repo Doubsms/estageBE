@@ -11,8 +11,8 @@ const ensureLogsDirectory = () => {
   return logsDir;
 };
 
-// Stockage global des requêtes SQL (simple et efficace)
-const sqlQueriesMap = new Map();
+// Stockage global des requêtes Prisma (simple et efficace)
+const prismaQueriesMap = new Map();
 
 const actionLogger = async (req, res, next) => {
   const startTime = Date.now();
@@ -22,11 +22,11 @@ const actionLogger = async (req, res, next) => {
   req._httpRequestId = httpRequestId;
   req._startTime = startTime;
   
-  // Initialiser la liste des requêtes SQL pour cette requête HTTP
-  sqlQueriesMap.set(httpRequestId, []);
+  // Initialiser la liste des requêtes Prisma pour cette requête HTTP
+  prismaQueriesMap.set(httpRequestId, []);
   
-  // Monkey patch pour intercepter les requêtes SQL
-  patchConnectionPool(req.app.get('connection'), httpRequestId);
+  // Monkey patch pour intercepter les requêtes Prisma
+  patchPrismaClient(req.prisma, httpRequestId);
   
   // Variable pour éviter les logs multiples
   let isLogged = false;
@@ -37,7 +37,7 @@ const actionLogger = async (req, res, next) => {
       isLogged = true;
       await logAction(req, res, startTime, httpRequestId);
       // Nettoyer après le log
-      sqlQueriesMap.delete(httpRequestId);
+      prismaQueriesMap.delete(httpRequestId);
     }
   };
   
@@ -49,109 +49,135 @@ const actionLogger = async (req, res, next) => {
   next();
 };
 
-// Fonction pour patcher le pool de connexions
-function patchConnectionPool(pool, httpRequestId) {
-  if (!pool || pool._patchedForRequest === httpRequestId) {
+// Fonction pour patcher le client Prisma
+function patchPrismaClient(prisma, httpRequestId) {
+  if (!prisma || prisma._patchedForRequest === httpRequestId) {
     return;
   }
   
-  pool._patchedForRequest = httpRequestId;
-  const originalGetConnection = pool.getConnection;
+  prisma._patchedForRequest = httpRequestId;
   
-  pool.getConnection = async function() {
-    const connection = await originalGetConnection.call(this);
+  // Patcher $queryRaw
+  const originalQueryRaw = prisma.$queryRaw;
+  prisma.$queryRaw = function() {
+    const startTime = Date.now();
+    const queryId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const args = Array.from(arguments);
     
-    // Patcher execute()
-    const originalExecute = connection.execute;
-    connection.execute = function(sql, params, callback) {
-      const startTime = Date.now();
-      const sqlId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-      
-      // Capturer la requête SQL
-      const sqlQueries = sqlQueriesMap.get(httpRequestId) || [];
-      sqlQueries.push({
-        id: sqlId,
-        sql: sql,
-        params: params,
-        startTime: startTime,
-        type: 'execute'
+    // Capturer la requête SQL
+    const prismaQueries = prismaQueriesMap.get(httpRequestId) || [];
+    prismaQueries.push({
+      id: queryId,
+      type: '$queryRaw',
+      args: args,
+      startTime: startTime
+    });
+    prismaQueriesMap.set(httpRequestId, prismaQueries);
+    
+    // Exécuter la requête originale
+    return originalQueryRaw.apply(this, args)
+      .then(result => {
+        const duration = Date.now() - startTime;
+        updatePrismaQuery(httpRequestId, queryId, duration, null, result);
+        return result;
+      })
+      .catch(error => {
+        const duration = Date.now() - startTime;
+        updatePrismaQuery(httpRequestId, queryId, duration, error);
+        throw error;
       });
-      sqlQueriesMap.set(httpRequestId, sqlQueries);
-      
-    //   console.log(`📊 [SQL ${sqlId}] ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
-      
-      if (callback) {
-        // Version avec callback
-        return originalExecute.call(this, sql, params, (err, results, fields) => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, err);
-          callback(err, results, fields);
-        });
-      } else {
-        // Version Promise
-        return originalExecute.call(this, sql, params).then(([results, fields]) => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, null);
-          return [results, fields];
-        }).catch(err => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, err);
-          throw err;
-        });
-      }
-    };
-    
-    // Patcher query() aussi
-    const originalQuery = connection.query;
-    connection.query = function(sql, params, callback) {
-      const startTime = Date.now();
-      const sqlId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-      
-      const sqlQueries = sqlQueriesMap.get(httpRequestId) || [];
-      sqlQueries.push({
-        id: sqlId,
-        sql: sql,
-        params: params,
-        startTime: startTime,
-        type: 'query'
-      });
-      sqlQueriesMap.set(httpRequestId, sqlQueries);
-      
-    //   console.log(`📊 [SQL ${sqlId}] QUERY: ${sql.substring(0, 100)}${sql.length > 100 ? '...' : ''}`);
-      
-      if (callback) {
-        return originalQuery.call(this, sql, params, (err, results, fields) => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, err);
-          callback(err, results, fields);
-        });
-      } else {
-        return originalQuery.call(this, sql, params).then(([results, fields]) => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, null);
-          return [results, fields];
-        }).catch(err => {
-          const duration = Date.now() - startTime;
-          updateSQLQuery(httpRequestId, sqlId, duration, err);
-          throw err;
-        });
-      }
-    };
-    
-    return connection;
   };
+  
+  // Patcher $executeRaw
+  const originalExecuteRaw = prisma.$executeRaw;
+  prisma.$executeRaw = function() {
+    const startTime = Date.now();
+    const queryId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const args = Array.from(arguments);
+    
+    const prismaQueries = prismaQueriesMap.get(httpRequestId) || [];
+    prismaQueries.push({
+      id: queryId,
+      type: '$executeRaw',
+      args: args,
+      startTime: startTime
+    });
+    prismaQueriesMap.set(httpRequestId, prismaQueries);
+    
+    return originalExecuteRaw.apply(this, args)
+      .then(result => {
+        const duration = Date.now() - startTime;
+        updatePrismaQuery(httpRequestId, queryId, duration, null, result);
+        return result;
+      })
+      .catch(error => {
+        const duration = Date.now() - startTime;
+        updatePrismaQuery(httpRequestId, queryId, duration, error);
+        throw error;
+      });
+  };
+  
+  // Patcher les méthodes de modèle (findMany, findUnique, create, update, delete, etc.)
+  patchPrismaModels(prisma, httpRequestId);
 }
 
-// Fonction pour mettre à jour une requête SQL
-function updateSQLQuery(httpRequestId, sqlId, duration, error) {
-  const sqlQueries = sqlQueriesMap.get(httpRequestId);
-  if (sqlQueries) {
-    const sqlQuery = sqlQueries.find(q => q.id === sqlId);
-    if (sqlQuery) {
-      sqlQuery.duration = duration;
-      sqlQuery.error = error ? error.message || String(error) : null;
-      sqlQuery.completed = true;
-    //   console.log(`   ⏱️  SQL ${sqlId}: ${duration}ms ${error ? '❌' : '✅'}`);
+// Fonction pour patcher tous les modèles Prisma
+function patchPrismaModels(prisma, httpRequestId) {
+  // Obtenir tous les noms de modèles (ceux qui ne commencent pas par $)
+  const modelNames = Object.keys(prisma).filter(key => !key.startsWith('$') && !key.startsWith('_'));
+  
+  modelNames.forEach(modelName => {
+    const model = prisma[modelName];
+    
+    // Patcher les méthodes principales
+    const methods = ['findMany', 'findUnique', 'findFirst', 'create', 'update', 'delete', 'count', 'groupBy'];
+    
+    methods.forEach(method => {
+      if (typeof model[method] === 'function') {
+        const originalMethod = model[method];
+        model[method] = function() {
+          const startTime = Date.now();
+          const queryId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+          const args = Array.from(arguments);
+          
+          const prismaQueries = prismaQueriesMap.get(httpRequestId) || [];
+          prismaQueries.push({
+            id: queryId,
+            model: modelName,
+            method: method,
+            args: args,
+            startTime: startTime
+          });
+          prismaQueriesMap.set(httpRequestId, prismaQueries);
+          
+          return originalMethod.apply(this, args)
+            .then(result => {
+              const duration = Date.now() - startTime;
+              updatePrismaQuery(httpRequestId, queryId, duration, null, result);
+              return result;
+            })
+            .catch(error => {
+              const duration = Date.now() - startTime;
+              updatePrismaQuery(httpRequestId, queryId, duration, error);
+              throw error;
+            });
+        };
+      }
+    });
+  });
+}
+
+// Fonction pour mettre à jour une requête Prisma
+function updatePrismaQuery(httpRequestId, queryId, duration, error, result = null) {
+  const prismaQueries = prismaQueriesMap.get(httpRequestId);
+  if (prismaQueries) {
+    const prismaQuery = prismaQueries.find(q => q.id === queryId);
+    if (prismaQuery) {
+      prismaQuery.duration = duration;
+      prismaQuery.error = error ? error.message || String(error) : null;
+      prismaQuery.completed = true;
+      prismaQuery.resultType = result ? (Array.isArray(result) ? 'array' : typeof result) : null;
+      prismaQuery.resultCount = result ? (Array.isArray(result) ? result.length : 1) : 0;
     }
   }
 }
@@ -160,45 +186,42 @@ async function logAction(req, res, startTime, httpRequestId) {
   const duration = Date.now() - startTime;
   
   try {
-    // Récupérer les informations de l'utilisateur depuis req.admin
+    // Récupérer les informations de l'utilisateur
     let userEmail = 'Anonymous';
     let userName = 'Anonymous';
 
-    // console.log('=== LOG ACTION DEBUG ===');
-    // console.log('req.admin exists?', !!req.admin);
-    // console.log('Request URL:', req.originalUrl);
-    
-    if (req.admin) {
-      // Utiliser req.admin comme vous l'avez spécifié
-      userEmail = req.admin.email || req.admin.EMAILADMIN || 'Unknown';
-      
-      // Construire le nom complet
-      if (req.admin.nom && req.admin.prenom) {
-        userName = `${req.admin.nom} ${req.admin.prenom}`;
-      } else if (req.admin.nom) {
-        userName = req.admin.nom;
-      } else if (req.admin.NOMADMIN && req.admin.PRENOMADMIN) {
-        userName = `${req.admin.NOMADMIN} ${req.admin.PRENOMADMIN}`;
-      } else if (req.admin.NOMADMIN) {
-        userName = req.admin.NOMADMIN;
-      } else {
-        userName = 'Unknown';
+    // Pour les requêtes authentifiées avec JWT
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+      const token = authHeader.split(' ')[1];
+      if (token) {
+        try {
+          const jwt = require('jsonwebtoken');
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'votre_secret_jwt_tres_long_et_complexe');
+          
+          if (decoded.email) userEmail = decoded.email;
+          if (decoded.nom && decoded.prenom) {
+            userName = `${decoded.nom} ${decoded.prenom}`;
+          } else if (decoded.matricule) {
+            userName = decoded.matricule;
+          }
+        } catch (jwtError) {
+          // Token invalide, on garde les valeurs par défaut
+        }
       }
-    } else if (req.originalUrl === '/logadmin' && req.body && req.body.email) {
-      // Pour les tentatives de login
+    }
+    
+    // Pour les requêtes POST de login
+    if (req.originalUrl === '/login' && req.body && req.body.email) {
       userEmail = req.body.email;
       userName = 'Login attempt';
     }
     
-    console.log('Extracted userEmail:', userEmail);
-    console.log('Extracted userName:', userName);
-    
     // Déterminer l'action en fonction de la route et de la méthode
     const action = determineAction(req.method, req.originalUrl);
     
-    // Récupérer les requêtes SQL pour cette requête HTTP
-    const sqlQueries = sqlQueriesMap.get(httpRequestId) || [];
-    // console.log(`📊 ${sqlQueries.length} requêtes SQL capturées`);
+    // Récupérer les requêtes Prisma pour cette requête HTTP
+    const prismaQueries = prismaQueriesMap.get(httpRequestId) || [];
     
     // Construire l'objet de log
     const logData = {};
@@ -218,7 +241,7 @@ async function logAction(req, res, startTime, httpRequestId) {
     
     if (req.body && Object.keys(req.body).length > 0) {
       const safeBody = { ...req.body };
-      ['password', 'motDePasse', 'confirmPassword', 'oldPassword', 'newPassword'].forEach(field => {
+      ['password', 'motDePasse', 'confirmPassword', 'oldPassword', 'newPassword', 'PASSWARDADMIN'].forEach(field => {
         if (safeBody[field]) safeBody[field] = '***HIDDEN***';
       });
       logData.http_body = safeBody;
@@ -228,39 +251,55 @@ async function logAction(req, res, startTime, httpRequestId) {
       logData.http_params = req.params;
     }
     
-    // 3. Requêtes SQL (LA PARTIE IMPORTANTE)
-    if (sqlQueries.length > 0) {
-      logData.sql_queries = sqlQueries.map(q => {
-        // Nettoyer la requête SQL pour la sécurité
-        let safeSql = q.sql;
-        if (safeSql) {
-          // Masquer les données sensibles
-          safeSql = safeSql.replace(/VALUES\s*\([^)]+\)/gi, 'VALUES (***DATA***)');
-          safeSql = safeSql.replace(/SET\s*[^WHERE]+/gi, 'SET ***DATA***');
-          // Limiter la longueur
-          if (safeSql.length > 500) {
-            safeSql = safeSql.substring(0, 500) + '... [TRUNCATED]';
+    // 3. Requêtes Prisma
+    if (prismaQueries.length > 0) {
+      logData.prisma_queries = prismaQueries.map(q => {
+        // Formater les arguments pour la sécurité
+        let argsPreview = '';
+        if (q.args && q.args.length > 0) {
+          try {
+            const argsStr = JSON.stringify(q.args, (key, value) => {
+              // Masquer les données sensibles
+              if (key && (key.toLowerCase().includes('password') || 
+                         key.toLowerCase().includes('pass') || 
+                         key === 'PASSWARDADMIN')) {
+                return '***HIDDEN***';
+              }
+              return value;
+            });
+            
+            // Limiter la longueur
+            if (argsStr.length > 200) {
+              argsPreview = argsStr.substring(0, 200) + '... [TRUNCATED]';
+            } else {
+              argsPreview = argsStr;
+            }
+          } catch (e) {
+            argsPreview = '[Cannot stringify args]';
           }
         }
         
         return {
-          type: q.type,
-          sql_preview: safeSql,
-          params_count: q.params ? (Array.isArray(q.params) ? q.params.length : 1) : 0,
+          model: q.model || 'raw',
+          method: q.method || q.type,
+          args_preview: argsPreview,
           duration_ms: q.duration || null,
           error: q.error || null,
-          completed: q.completed || false
+          completed: q.completed || false,
+          result_type: q.resultType || null,
+          result_count: q.resultCount || 0
         };
       });
       
-      // Statistiques SQL
-      logData.sql_stats = {
-        total_queries: sqlQueries.length,
-        completed_queries: sqlQueries.filter(q => q.completed).length,
-        total_duration_ms: sqlQueries.reduce((sum, q) => sum + (q.duration || 0), 0),
-        avg_duration_ms: sqlQueries.length > 0 ? 
-          sqlQueries.reduce((sum, q) => sum + (q.duration || 0), 0) / sqlQueries.length : 0,
-        has_errors: sqlQueries.some(q => q.error)
+      // Statistiques Prisma
+      logData.prisma_stats = {
+        total_queries: prismaQueries.length,
+        completed_queries: prismaQueries.filter(q => q.completed).length,
+        total_duration_ms: prismaQueries.reduce((sum, q) => sum + (q.duration || 0), 0),
+        avg_duration_ms: prismaQueries.length > 0 ? 
+          prismaQueries.reduce((sum, q) => sum + (q.duration || 0), 0) / prismaQueries.length : 0,
+        has_errors: prismaQueries.some(q => q.error),
+        models_used: [...new Set(prismaQueries.map(q => q.model).filter(Boolean))]
       };
     }
     
@@ -268,9 +307,6 @@ async function logAction(req, res, startTime, httpRequestId) {
     let requeteExecutee = null;
     try {
       requeteExecutee = JSON.stringify(logData, null, 2);
-    //   console.log('✅ Données de log préparées avec succès');
-    //   console.log(`   Taille: ${requeteExecutee.length} caractères`);
-    //   console.log(`   Requêtes SQL incluses: ${sqlQueries.length}`);
     } catch (jsonError) {
       console.error('❌ Erreur de sérialisation JSON:', jsonError);
       requeteExecutee = JSON.stringify({
@@ -279,11 +315,9 @@ async function logAction(req, res, startTime, httpRequestId) {
           method: req.method,
           url: req.originalUrl
         },
-        sql_queries_count: sqlQueries.length
+        prisma_queries_count: prismaQueries.length
       });
     }
-    
-    // console.log('=======================');
     
     // Récupérer l'IP réelle
     const ipAddress = req.headers['x-forwarded-for'] || 
@@ -302,16 +336,22 @@ async function logAction(req, res, startTime, httpRequestId) {
       ip_address: ipAddress ? ipAddress.substring(0, 45) : null,
       user_agent: req.headers['user-agent'] || null,
       status_code: res.statusCode,
-      response_time: duration,
       horodatage: new Date()
     };
     
-    // Enregistrer dans la base de données
-    await saveActionLog(req.app.get('connection'), logDataToSave);
+    // Enregistrer dans la base de données via Prisma
+    await saveActionLog(req.prisma, logDataToSave);
     
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du log:', error.message);
-    // Ne pas bloquer l'application
+    // Log de secours dans un fichier
+    try {
+      const logsDir = ensureLogsDirectory();
+      const logEntry = `[${new Date().toISOString()}] Échec log DB: ${error.message} - URL: ${req.originalUrl}\n`;
+      fs.appendFileSync(path.join(logsDir, 'prisma_logs_fallback.log'), logEntry);
+    } catch (fileError) {
+      console.error('Échec de la sauvegarde dans le fichier:', fileError);
+    }
   }
 }
 
@@ -323,46 +363,54 @@ function determineAction(method, url) {
   // Mapper les routes aux actions
   const routeActions = {
     // Authentification
-    '/logadmin': 'Connexion administrateur',
+    '/login': 'Connexion administrateur',
     '/verify-token': 'Vérification token',
     
-    // Demandes de stage
-    '/demandesNT': 'Consultation demandes non traitées',
-    '/stagiaresActuel': 'Consultation stagiaires actuels',
-    '/stagiaresAccepte': 'Consultation stagiaires acceptés',
+    // Administrateurs
+    '/administrateurs': 'Gestion administrateurs',
+    
+    // Étudiants
+    '/etudiants': 'Gestion étudiants',
+    
+    // Encadreurs
+    '/encadreurs': 'Gestion encadreurs',
+    
+    // Structures
+    '/structures': 'Gestion structures',
+    
+    // Dossiers
+    '/dossiers': 'Gestion dossiers',
+    
+    // Affectations
+    '/affectations': 'Gestion affectations',
+    
+    // Rapports
+    '/rapports': 'Gestion rapports',
     
     // Dashboard
     '/dashboard': 'Accès dashboard',
     
-    // Profil
-    '/profile': 'Consultation profil',
-    
-    // Rapports
-    '/nouveaurapport': 'Création rapport',
-    '/updaterapport': 'Mise à jour rapport',
-    '/historique': 'Consultation historique rapports',
-    '/historiquespeciaux': 'Consultation rapports spéciaux',
-    
-    // Gestion des données
-    '/etudiants': 'Gestion étudiants',
-    '/encadreurs': 'Gestion encadreurs',
-    '/charge_de_stage': 'Gestion chargés de stage',
-    '/attributions': 'Gestion attributions',
-    '/dossiers': 'Gestion dossiers',
-    
-    // Email
-    '/mail': 'Envoi email',
-    
     // Logs
-    '/logs': 'Consultation logs'
+    '/logs': 'Consultation logs',
+    
+    // Test
+    '/test-prisma': 'Test Prisma'
   };
   
   // Chercher l'action correspondante
   for (const [route, action] of Object.entries(routeActions)) {
-    if (path.includes(route)) {
+    if (path.startsWith(route)) {
       return `${getMethodAction(method)} ${action}`;
     }
   }
+  
+  // Vérifier les routes avec paramètres
+  if (path.match(/^\/etudiants\/[^\/]+$/)) return 'Consultation étudiant';
+  if (path.match(/^\/administrateurs\/[^\/]+$/)) return 'Consultation administrateur';
+  if (path.match(/^\/encadreurs\/[^\/]+$/)) return 'Consultation encadreur';
+  if (path.match(/^\/structures\/[^\/]+$/)) return 'Consultation structure';
+  if (path.match(/^\/dossiers\/[^\/]+$/)) return 'Consultation dossier';
+  if (path.match(/^\/rapports\/[^\/]+$/)) return 'Consultation rapport';
   
   // Par défaut, utiliser le chemin
   return `${getMethodAction(method)} ${path}`;
@@ -381,73 +429,85 @@ function getMethodAction(method) {
   return actions[method] || method;
 }
 
-// Fonction pour sauvegarder le log dans la base de données
-async function saveActionLog(pool, logData) {
-  let connection;
+// Fonction pour sauvegarder le log dans la base de données via Prisma
+async function saveActionLog(prisma, logData) {
   try {
-    // Récupérer une connexion depuis le pool
-    connection = await pool.getConnection();
-    
-    const query = `
-      INSERT INTO logs_actions (
-        user_email, 
-        user_name, 
-        action, 
-        methode_http, 
-        endpoint, 
-        requete_executee, 
-        ip_address, 
-        user_agent, 
-        status_code,
-        horodatage
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    
-    const values = [
-      logData.user_email,
-      logData.user_name,
-      logData.action,
-      logData.methode_http,
-      logData.endpoint,
-      logData.requete_executee,
-      logData.ip_address,
-      logData.user_agent,
-      logData.status_code,
-      logData.horodatage
-    ];
-    
-    await connection.execute(query, values);
-    // console.log(`📝 Log d'action sauvegardé pour ${logData.user_name} (${logData.user_email})`);
-    // console.log(`   Action: ${logData.action}`);
-    // console.log(`   Taille requête_exécutée: ${logData.requete_executee ? logData.requete_executee.length : 0} caractères`);
-    connection.release();
-    
-  } catch (error) {
-    console.error('Erreur lors de la sauvegarde du log:', error.message);
-    
-    // Libérer la connexion si elle existe
-    if (connection) {
-      try {
-        connection.release();
-      } catch (releaseError) {
-        console.error('Erreur lors de la libération de la connexion:', releaseError);
+    // Utiliser Prisma pour insérer le log
+    await prisma.logs_actions.create({
+      data: {
+        user_email: logData.user_email,
+        user_name: logData.user_name,
+        action: logData.action,
+        methode_http: logData.methode_http,
+        endpoint: logData.endpoint,
+        requete_executee: logData.requete_executee,
+        ip_address: logData.ip_address,
+        user_agent: logData.user_agent,
+        status_code: logData.status_code,
+        horodatage: logData.horodatage
       }
+    });
+    
+    // Log de débogage (optionnel)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`📝 Log d'action sauvegardé pour ${logData.user_name} (${logData.user_email})`);
+      console.log(`   Action: ${logData.action}`);
+      console.log(`   Taille requête_exécutée: ${logData.requete_executee ? logData.requete_executee.length : 0} caractères`);
     }
     
-    // Log dans un fichier en cas d'échec de la base de données
+  } catch (error) {
+    console.error('Erreur lors de la sauvegarde du log via Prisma:', error.message);
+    
+    // Log dans un fichier en cas d'échec
     try {
       const logsDir = ensureLogsDirectory();
-      const logEntry = `[${new Date().toISOString()}] Échec log DB: ${JSON.stringify({
+      const logEntry = `[${new Date().toISOString()}] Échec log Prisma: ${JSON.stringify({
         user: logData.user_name,
         action: logData.action,
         endpoint: logData.endpoint,
-        error: error.message,
-        sql_queries_included: logData.requete_executee && logData.requete_executee.includes('sql_queries') ? 'YES' : 'NO'
+        error: error.message
       })}\n`;
-      fs.appendFileSync(path.join(logsDir, 'action_logs_fallback.log'), logEntry);
-      console.log('Log sauvegardé dans le fichier de secours');
+      fs.appendFileSync(path.join(logsDir, 'prisma_action_logs_fallback.log'), logEntry);
     } catch (fileError) {
       console.error('Échec de la sauvegarde dans le fichier:', fileError);
+    }
+    
+    // Tentative alternative avec query raw si Prisma échoue
+    try {
+      if (logData.requete_executee && logData.requete_executee.length > 10000) {
+        // Tronquer si trop long
+        logData.requete_executee = logData.requete_executee.substring(0, 10000) + '... [TRUNCATED]';
+      }
+      
+      await prisma.$executeRaw`
+        INSERT INTO logs_actions (
+          user_email, 
+          user_name, 
+          action, 
+          methode_http, 
+          endpoint, 
+          requete_executee, 
+          ip_address, 
+          user_agent, 
+          status_code,
+          horodatage
+        ) VALUES (
+          ${logData.user_email},
+          ${logData.user_name},
+          ${logData.action},
+          ${logData.methode_http},
+          ${logData.endpoint},
+          ${logData.requete_executee},
+          ${logData.ip_address},
+          ${logData.user_agent},
+          ${logData.status_code},
+          ${logData.horodatage}
+        )
+      `;
+      
+      console.log('Log sauvegardé avec $executeRaw');
+    } catch (rawError) {
+      console.error('Échec même avec $executeRaw:', rawError.message);
     }
   }
 }
