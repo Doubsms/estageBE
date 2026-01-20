@@ -9,8 +9,11 @@ exports.getStagiaresActuels = async (req, res) => {
         const dossiers = await req.prisma.dossier.findMany({
             where: {
                 ETAT: 'accepté',
+                DATEDEBUTDESEANCE: {
+                    lte : today
+                },
                 DATEFINDESEANCE: {
-                    gte: today  // gte = greater than or equal (>=)
+                    gte: today,  // gte = greater than or equal (>=)
                 }
             },
             include: {
