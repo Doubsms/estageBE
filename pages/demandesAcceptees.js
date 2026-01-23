@@ -34,41 +34,74 @@ exports.getStagiaresAccepte = async (req, res) => {
             const encadreur = affectation?.encadreur;
             const structure = affectation?.structures;
             
-            // Fonction pour construire la hiérarchie complète
-            const getHierarchieComplete = async (structureId) => {
-                if (!structureId) return '';
+            // Fonction pour remonter jusqu'au département parent (niveau 1 après DG)
+            const getDepartementParent = async (structureId) => {
+                if (!structureId) return { hierarchie: '', departement: '' };
                 
                 const hierachie = [];
                 let currentStructure = await req.prisma.structures.findUnique({
                     where: { IDSTRUCTURE: structureId },
-                    select: { ABBREVIATION: true, IDPARENT: true, NOMSTRUCTURE: true }
+                    select: { 
+                        IDSTRUCTURE: true,
+                        ABBREVIATION: true, 
+                        NOMSTRUCTURE: true,
+                        IDPARENT: true 
+                    }
                 });
                 
+                let departementParent = null;
+                
+                // Remonter la hiérarchie complète
                 while (currentStructure) {
-                    hierachie.unshift(currentStructure.ABBREVIATION); // Ajouter au début pour avoir l'ordre racine -> feuille
+                    hierachie.unshift({
+                        id: currentStructure.IDSTRUCTURE,
+                        abbreviation: currentStructure.ABBREVIATION,
+                        nom: currentStructure.NOMSTRUCTURE,
+                        parent: currentStructure.IDPARENT
+                    });
                     
                     if (currentStructure.IDPARENT) {
                         currentStructure = await req.prisma.structures.findUnique({
                             where: { IDSTRUCTURE: currentStructure.IDPARENT },
-                            select: { ABBREVIATION: true, IDPARENT: true, NOMSTRUCTURE: true }
+                            select: { 
+                                IDSTRUCTURE: true,
+                                ABBREVIATION: true, 
+                                NOMSTRUCTURE: true,
+                                IDPARENT: true 
+                            }
                         });
                     } else {
                         break;
                     }
                 }
                 
-                // Remplacer DG par INS s'il est présent
-                const hierachieFormatee = hierachie.map(abrev => 
-                    abrev === 'DG' ? 'INS' : abrev
-                );
+                // Trouver le département parent (premier enfant direct de DG/Direction Générale)
+                for (let i = 0; i < hierachie.length; i++) {
+                    const structure = hierachie[i];
+                    
+                    // Vérifier si le parent est DG (ID 2 selon vos données)
+                    if (structure.parent === 2) {
+                        departementParent = structure;
+                        break;
+                    }
+                }
                 
-                return hierachieFormatee.join('/');
+                // Construire la hiérarchie formatée
+                const hierachieFormatee = hierachie.map(s => 
+                    s.abbreviation === 'DG' ? 'INS' : s.abbreviation
+                ).join('/');
+                
+                return {
+                    hierarchie: hierachieFormatee,
+                    departement: departementParent ? departementParent.abbreviation : '',
+                    departementNom: departementParent ? departementParent.nom : ''
+                };
             };
 
-            // Obtenir la hiérarchie complète si une structure existe
-            let hierachie = '';
+            // Obtenir la hiérarchie complète et le département parent si une structure existe
+            let hierarchieData = { hierarchie: '', departement: '', departementNom: '' };
             if (structure?.IDSTRUCTURE) {
-                hierachie = await getHierarchieComplete(structure.IDSTRUCTURE);
+                hierarchieData = await getDepartementParent(structure.IDSTRUCTURE);
             }
 
             return {
@@ -85,6 +118,7 @@ exports.getStagiaresAccepte = async (req, res) => {
                 SEXE: etudiant?.SEXE || null,
                 
                 // Données dossier (dates et thème)
+                IDDOSSIER: d.IDDOSSIER,
                 DATEDEBUTDESEANCE: d.DATEDEBUTDESEANCE,
                 DATEFINDESEANCE: d.DATEFINDESEANCE,
                 THEME: d.THEME || null,
@@ -99,8 +133,10 @@ exports.getStagiaresAccepte = async (req, res) => {
                 NOMSTRUCTURE: structure?.NOMSTRUCTURE || null,
                 ABBREVIATION: structure?.ABBREVIATION || null,
                 
-                // Nouveau champ : Hiérarchie complète
-                HIERARCHIE: hierachie
+                // Hiérarchie complète et département parent
+                HIERARCHIE: hierarchieData.hierarchie,
+                DEPARTEMENT: hierarchieData.departement,
+                DEPARTEMENTNOM: hierarchieData.departementNom
             };
         }));
 

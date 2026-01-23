@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `lettreacceptation` ADD COLUMN `EMAILSENT` BOOLEAN NOT NULL DEFAULT false;

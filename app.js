@@ -33,6 +33,8 @@ const envoiMail = require('./fonctionalites/mail.js');
 const historiqueRapports = require('./pages/historiqueRapport.js');
 const encadreurController = require('./controllers/encadreur');
 const profileController = require('./pages/profile.js');
+const lettreAcceptationController = require('./pages/lettreacceptation.js');
+const testmail = require('./fonctionalites/testmail.js');
 
 
 const app = express();
@@ -91,11 +93,15 @@ app.post('/administrateurs', authenticateToken, (req, res) => administrateurCont
 // Dashboard (protégé)
 app.use('/dashboard',  dashboardRouter);
 
+// ---- TEST D'ENVOI D'EMAIL ----
+app.post('/test-email', (req, res) => testmail.sendEmail(req, res));
+app.post('/accuse-reception-dossier', (req, res) => envoiMail.sendAccuseReceptionDossier(req, res));
+
 // --- ÉTUDIANTS (protégé) ---
-app.post('/etudiants', authenticateToken,(req, res) => etudiantController.create(req, res));
+app.post('/etudiants', (req, res) => etudiantController.create(req, res));
 
 // --- DOSSIERS (protégé) ---
-app.post('/dossiers', authenticateToken,(req, res) => dossierController.create(req, res));
+app.post('/dossiers', (req, res) => dossierController.create(req, res));
 app.get('/dossiers', authenticateToken,(req, res) => dossierController.getAll(req, res));
 
 // --- PAGES DES DEMANDES (protégé) ---
@@ -108,6 +114,18 @@ app.put('/updatetheme',  authenticateToken, (req, res) => stagiairesActuels.upda
 app.get('/structures',  authenticateToken, (req, res) => structuresController.getAll(req, res));
 // --- Atribution des Encadreurs aux stagiares et heritage de structures (protégé) ---
 app.post('/traitement', authenticateToken, (req, res) => traitementDemande.affectation(req, res));
+
+// --- Archivage Lettre d'acceptation et envoie de mail d'acceptation (protégé) ---
+
+app.get('/lettreAcceptation', authenticateToken, (req, res) => lettreAcceptationController.getAll(req, res));
+app.get('/lettreAcceptation/:id', authenticateToken, (req, res) => lettreAcceptationController.getById(req, res));
+app.post('/lettreAcceptation', authenticateToken, (req, res) => lettreAcceptationController.create(req, res));
+app.put('/lettreAcceptation/:id', authenticateToken, (req, res) => lettreAcceptationController.update(req, res));
+app.delete('/lettreAcceptation/:id', authenticateToken, (req, res) => lettreAcceptationController.delete(req, res));
+app.get('/lettreAcceptation/dossier/:idDossier', authenticateToken, (req, res) => lettreAcceptationController.getByDossier(req, res));
+app.get('/lettreAcceptation/:id/download', authenticateToken, (req, res) => lettreAcceptationController.downloadLettreAcceptation(req, res));
+app.get('/lettreAcceptation/check/:idDossier', authenticateToken, (req, res) => lettreAcceptationController.checkByDossier(req, res));
+app.post('/lettreAcceptation/:id/renvoyer-email', authenticateToken, (req, res) => lettreAcceptationController.renvoyerEmail(req, res));
 
 // --- Archivage de Rapports (protégé) ---
 app.post('/rapport', authenticateToken, (req, res) => rapportController.create(req, res));

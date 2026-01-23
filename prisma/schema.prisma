@@ -50,7 +50,7 @@ model dossier {
   EMAILSENT            Boolean?      @default(false)
   affectation          affectation[]
   etudiant             etudiant?     @relation(fields: [MATRICULEETUDIANT], references: [MATRICULEETUDIANT], onDelete: Restrict, onUpdate: Restrict, map: "dossier_ibfk_1")
-
+  lettreAcceptation lettreAcceptation[]
   @@index([MATRICULEETUDIANT], map: "FK_DEPOSER")
 }
 
@@ -112,6 +112,18 @@ model rapport {
   etudiant    etudiant @relation(fields: [MATRICULE], references: [MATRICULEETUDIANT], onUpdate: Restrict, map: "rapport_ibfk_1")
 
   @@index([MATRICULE], map: "MATRICULE")
+}
+
+model lettreAcceptation {
+  IDLETTRE    Int      @id @default(autoincrement())
+  IDDOSSIER   Int
+  COMMENTAIRE String   @db.VarChar(500)
+  FICHIER     String   @db.VarChar(255)
+  DATEUPLOAD  DateTime @default(now()) @db.Timestamp(0)
+  EMAILSENT   Boolean  @default(false)  
+  dossier     dossier  @relation(fields: [IDDOSSIER], references: [IDDOSSIER], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([IDDOSSIER], map: "FK_LETTRE_ACCEPTATION_DOSSIER")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
