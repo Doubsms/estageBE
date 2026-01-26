@@ -37,6 +37,48 @@ const upload = multer({
 // Middleware pour uploader un fichier de lettre d'acceptation
 const uploadLettreAcceptation = upload.single('lettreAcceptation');
 
+// Configuration du transporteur SMTP pour Gmail
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  auth: {
+    user: 'inscamerounstage@gmail.com',
+    pass: 'cdtfhjfuzxjirues'
+  },
+  tls: {
+    ciphers: 'SSLv3'
+  }
+});
+
+// Fonction pour charger le logo
+const loadLogo = () => {
+  const logoPath = path.join(__dirname, 'logo_INS_cameroun.png');
+  let attachments = [];
+  let logoContentId = 'logo@inscameroun';
+  
+  if (fs.existsSync(logoPath)) {
+    try {
+      const logoContent = fs.readFileSync(logoPath);
+      attachments = [{
+        filename: 'logo_INS_cameroun.png',
+        content: logoContent,
+        contentType: 'image/png',
+        cid: logoContentId
+      }];
+      console.log('✅ Logo chargé avec succès');
+      return { attachments, logoContentId };
+    } catch (error) {
+      console.error('❌ Erreur lors de la lecture du logo:', error.message);
+    }
+  } else {
+    console.warn('⚠️ Logo non trouvé à l\'emplacement:', logoPath);
+  }
+  
+  return { attachments: [], logoContentId };
+};
+
 // Fonction pour envoyer l'email d'acceptation de stage
 async function sendAcceptationEmail(etudiant, dossier, fichierLettre) {
   try {
@@ -60,141 +102,258 @@ async function sendAcceptationEmail(etudiant, dossier, fichierLettre) {
       minute: '2-digit'
     });
 
+    // Charger le logo
+    const { attachments: logoAttachments, logoContentId } = loadLogo();
+
     const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 25px; border: 2px solid #2e7d32; border-radius: 12px; background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);">
-        <div style="text-align: center; margin-bottom: 25px;">
-          <h1 style="color: #2e7d32; margin-bottom: 10px; font-size: 28px;">🎉 FÉLICITATIONS !</h1>
-          <h2 style="color: #2c3e50; font-size: 22px;">Votre demande de stage a été acceptée</h2>
-        </div>
-        
-        <p style="font-size: 16px; line-height: 1.6; color: #333;">
-          Cher(e) <strong>${etudiant.PRENOMETUDIANT} ${etudiant.NOMETUDIANT}</strong>,
-        </p>
-        
-        <p style="font-size: 16px; line-height: 1.6; color: #333;">
-          Nous avons le plaisir de vous informer que votre demande de stage a été <strong style="color: #2e7d32;">approuvée</strong>.
-        </p>
-        
-        <div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; margin: 25px 0; border-left: 4px solid #2e7d32;">
-          <p style="margin: 0; font-weight: bold; color: #2e7d32; font-size: 17px;">📋 Détails de votre stage</p>
-          <div style="margin-top: 15px;">
-            <p style="margin: 8px 0;"><strong>Matricule :</strong> ${etudiant.MATRICULEETUDIANT}</p>
-            <p style="margin: 8px 0;"><strong>Période de stage :</strong> ${periodeStage}</p>
-            <p style="margin: 8px 0;"><strong>Date d'approbation :</strong> ${dateFormatted}</p>
-            ${dossier.THEME ? `<p style="margin: 8px 0;"><strong>Thème :</strong> ${dossier.THEME}</p>` : ''}
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="margin: 0; padding: 0px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f7fa00;">
+        <div style="max-width: 700px; margin: 0 auto; background-color: white; border-radius: 15px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+          <!-- En-tête avec logo -->
+          <div style="background: linear-gradient(180deg, #cae0ce 0%, #f5fbf8 100%); padding: 5px; text-align: center;">
+            ${logoAttachments.length > 0 ? `
+              <img src="cid:${logoContentId}" 
+                   alt="INS Cameroun" 
+                   style="display: block; margin: 0 auto 20px auto; max-width: 240px; height: auto; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));">
+            ` : ''}
+            <div style="margin-top: 20px;">
+              <h1 style="color: white; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: 1px;">🎉 FÉLICITATIONS !</h1>
+              <p style="color: rgba(255,255,255,0.9); font-size: 18px; margin-top: 10px; font-weight: 300;">
+                Votre demande de stage a été acceptée
+              </p>
+            </div>
+          </div>
+          
+          <!-- Contenu principal -->
+          <div style="padding: 5px;">
+            <!-- Salutation -->
+            <p style="font-size: 18px; line-height: 1.6; color: #2c3e50; margin-bottom: 25px;">
+              Cher(e) <strong style="color: #3c3ce7;">${etudiant.PRENOMETUDIANT} ${etudiant.NOMETUDIANT}</strong>,
+            </p>
+            
+            <!-- Message principal -->
+            <div style="background-color: #f8f9fa; padding: 25px; border-radius: 10px; margin-bottom: 30px; border-left: 5px solid #27ae60;">
+              <p style="font-size: 17px; line-height: 1.7; color: #333; margin: 0;">
+                Nous avons le plaisir de vous informer que votre demande de stage professionnel 
+                <strong style="color: #27ae60;">a été officiellement approuvée</strong> par l'Institut National de la Statistique du Cameroun.
+              </p>
+            </div>
+            
+            <!-- Détails du stage -->
+            <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 25px; border-radius: 12px; margin: 30px 0; border: 2px solid #dfe6e9;">
+              <h3 style="color: #2c3e50; margin-top: 0; margin-bottom: 20px; font-size: 20px; display: flex; align-items: center;">
+                <span style="background-color: #3498db; color: white; padding: 8px 12px; border-radius: 50%; margin-right: 10px;">📋</span>
+                Détails de votre stage
+              </h3>
+              
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                <div style="background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                  <p style="margin: 0 0 5px 0; color: #7f8c8d; font-size: 14px;">👤 Étudiant</p>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">${etudiant.PRENOMETUDIANT} ${etudiant.NOMETUDIANT}</p>
+                </div>
+                
+                <div style="background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                  <p style="margin: 0 0 5px 0; color: #7f8c8d; font-size: 14px;">🔢 Matricule</p>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">${etudiant.MATRICULEETUDIANT}</p>
+                </div>
+                
+                <div style="background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                  <p style="margin: 0 0 5px 0; color: #7f8c8d; font-size: 14px;">📅 Période</p>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">${periodeStage}</p>
+                </div>
+                
+                ${dossier.THEME ? `
+                <div style="background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                  <p style="margin: 0 0 5px 0; color: #7f8c8d; font-size: 14px;">🎯 Thème</p>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">${dossier.THEME}</p>
+                </div>
+                ` : ''}
+              </div>
+            </div>
+            
+            <!-- Pièce jointe -->
+            <div style="background-color: #e3f2fd; padding: 5px; border-radius: 10px; margin: 25px 0; border: 2px dashed #2196f3;">
+              <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                <span style="background-color: #2196f3; color: white; padding: 10px; border-radius: 50%; margin-right: 15px; font-size: 18px;">📎</span>
+                <div>
+                  <p style="margin: 0 0 5px 0; font-weight: bold; color: #1565c0; font-size: 17px;">
+                    Lettre d'acceptation officielle
+                  </p>
+                  <p style="margin: 0; color: #333; font-size: 15px;">
+                    Votre document officiel est joint à cet email au format PDF.
+                  </p>
+                </div>
+              </div>
+              <p style="margin: 10px 0 0 0; color: #666; font-size: 14px; font-style: italic;">
+                ⚠️ Conservez précieusement ce document, il vous sera demandé lors de votre stage.
+              </p>
+            </div>
+            
+            <!-- Prochaines étapes -->
+            <div style="margin: 35px 0;">
+              <h3 style="color: #2c3e50; margin-bottom: 20px; font-size: 20px; display: flex; align-items: center;">
+                <span style="background-color: #9b59b6; color: white; padding: 8px 12px; border-radius: 50%; margin-right: 10px;">🚀</span>
+                Prochaines étapes à suivre
+              </h3>
+              
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center; border-top: 4px solid #3498db;">
+                  <div style="font-size: 24px; color: #3498db; margin-bottom: 10px;">1</div>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">Téléchargez votre lettre</p>
+                  <p style="margin: 10px 0 0 0; color: #7f8c8d; font-size: 14px;">Ouvrez et imprimez le PDF joint</p>
+                </div>
+                
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center; border-top: 4px solid #2ecc71;">
+                  <div style="font-size: 24px; color: #2ecc71; margin-bottom: 10px;">2</div>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">Contactez votre encadreur</p>
+                  <p style="margin: 10px 0 0 0; color: #7f8c8d; font-size: 14px;">Prenez contact pour planifier</p>
+                </div>
+                
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center; border-top: 4px solid #e74c3c;">
+                  <div style="font-size: 24px; color: #e74c3c; margin-bottom: 10px;">3</div>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">Préparez la convention</p>
+                  <p style="margin: 10px 0 0 0; color: #7f8c8d; font-size: 14px;">Remplissez les documents requis</p>
+                </div>
+                
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; text-align: center; border-top: 4px solid #f39c12;">
+                  <div style="font-size: 24px; color: #f39c12; margin-bottom: 10px;">4</div>
+                  <p style="margin: 0; font-weight: 600; color: #2c3e50;">Démarrez votre stage</p>
+                  <p style="margin: 10px 0 0 0; color: #7f8c8d; font-size: 14px;">Selon la période convenue</p>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Message de félicitations -->
+            <div style="text-align: center; padding: 5px; background: linear-gradient(135deg, #fff9e6 0%, #ffeaa7 100%); border-radius: 10px; margin: 30px 0; border: 1px solid #fdcb6e;">
+              <p style="margin: 0; font-size: 18px; color: #d35400; font-weight: 600;">
+                🏆 Toute l'équipe de l'INS Cameroun vous souhaite un stage exceptionnel, 
+                riche en apprentissages et en expériences professionnelles !
+              </p>
+            </div>
+          </div>
+          
+          <!-- Pied de page -->
+          <div style="background-color: #2c3e50; padding: 30px; text-align: center; color: white;">
+            <p style="margin: 0 0 10px 0; font-size: 20px; font-weight: 600;">
+              Institut National de la Statistique du Cameroun
+            </p>
+            <p style="margin: 0 0 15px 0; font-size: 16px; opacity: 0.9;">
+              Service des Stages et Développement des Compétences
+            </p>
+            
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.2);">
+              <p style="margin: 5px 0; font-size: 14px;">
+                📍 Yaoundé, Cameroun
+              </p>
+              <p style="margin: 5px 0; font-size: 14px;">
+                📧 <a href="mailto:inscamerounstage@gmail.com" style="color: #3498db; text-decoration: none;">inscamerounstage@gmail.com</a>
+              </p>
+              <p style="margin: 5px 0; font-size: 14px;">
+                📅 Date d'envoi : ${dateFormatted}
+              </p>
+            </div>
+            
+            <p style="margin-top: 25px; font-size: 12px; opacity: 0.7;">
+              Cet email a été envoyé automatiquement. Merci de ne pas y répondre directement.
+            </p>
           </div>
         </div>
-        
-        <div style="background-color: #e3f2fd; padding: 18px; border-radius: 10px; margin: 20px 0; border: 1px solid #2196f3;">
-          <p style="margin: 0 0 10px 0; font-weight: bold; color: #1565c0;">
-            📎 Pièce jointe
-          </p>
-          <p style="margin: 0; color: #333;">
-            Votre lettre d'acceptation officielle est jointe à cet email au format PDF.
-            <br><em style="color: #666; font-size: 14px;">Conservez précieusement ce document.</em>
-          </p>
-        </div>
-        
-        <div style="margin: 30px 0;">
-          <p style="font-weight: bold; color: #2c3e50; margin-bottom: 15px;">📝 Prochaines étapes :</p>
-          <ol style="padding-left: 20px; color: #333;">
-            <li style="margin-bottom: 8px;">Consultez votre lettre d'acceptation jointe</li>
-            <li style="margin-bottom: 8px;">Contactez votre encadreur pédagogique</li>
-            <li style="margin-bottom: 8px;">Préparez votre convention de stage</li>
-            <li>Démarrez votre stage selon la période prévue</li>
-          </ol>
-        </div>
-        
-        <p style="font-size: 16px; line-height: 1.6; color: #333;">
-          Nous vous souhaitons un excellent stage riche en apprentissages et en expériences professionnelles.
-        </p>
-        
-        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-          <p style="font-size: 15px; color: #2c3e50; font-weight: bold; margin-bottom: 5px;">
-            Cordialement,
-          </p>
-          <p style="font-size: 16px; color: #2e7d32; font-weight: bold; margin: 0;">
-            Le Service des Stages
-          </p>
-          <p style="font-size: 14px; color: #666; font-style: italic; margin-top: 5px;">
-            Institut National du Sport du Cameroun
-          </p>
-        </div>
-      </div>
+      </body>
+      </html>
     `;
 
     const plainText = `
 FÉLICITATIONS ! VOTRE DEMANDE DE STAGE A ÉTÉ ACCEPTÉE
 Institut National de la Statistique du Cameroun
+========================================================
 
 Cher(e) ${etudiant.PRENOMETUDIANT} ${etudiant.NOMETUDIANT},
 
-Nous avons le plaisir de vous informer que votre demande de stage professionnel a été approuvée.
+Nous avons le plaisir de vous informer que votre demande de stage professionnel a été officiellement approuvée par l'Institut National de la Statistique du Cameroun.
 
-DÉTAILS DE VOTRE STAGE :
+📋 DÉTAILS DE VOTRE STAGE :
+- Étudiant : ${etudiant.PRENOMETUDIANT} ${etudiant.NOMETUDIANT}
 - Matricule : ${etudiant.MATRICULEETUDIANT}
 - Période : ${periodeStage}
 - Date d'approbation : ${dateFormatted}
 ${dossier.THEME ? `- Thème : ${dossier.THEME}\n` : ''}
 
+📎 PIÈCE JOINTE :
 Votre lettre d'acceptation officielle est jointe à cet email au format PDF.
+Conservez précieusement ce document, il vous sera demandé lors de votre stage.
 
-PROCHAINES ÉTAPES :
-1. Consultez votre lettre d'acceptation jointe
+🚀 PROCHAINES ÉTAPES À SUIVRE :
+1. Téléchargez votre lettre d'acceptation
 2. Contactez votre encadreur pédagogique
 3. Préparez votre convention de stage
-4. Démarrez votre stage selon la période prévue
+4. Démarrez votre stage selon la période convenue
 
-Nous vous souhaitons un excellent stage riche en apprentissages et en expériences professionnelles.
+🏆 Toute l'équipe de l'INS Cameroun vous souhaite un stage exceptionnel, riche en apprentissages et en expériences professionnelles !
 
 Cordialement,
-Le Service des Stages et Developpement des compétences
+Le Service des Stages et Développement des Compétences
 Institut National de la Statistique du Cameroun
+
+📍 Yaoundé, Cameroun
+📧 inscamerounstage@gmail.com
+📅 Date d'envoi : ${dateFormatted}
+
+⚠️ Cet email a été envoyé automatiquement. Merci de ne pas y répondre directement.
     `;
 
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      requireTLS: true,
-      auth: {
-        user: 'inscamerounstage@gmail.com',
-        pass: 'cdtfhjfuzxjirues'
+    // Préparer les pièces jointes (lettre + logo)
+    const allAttachments = [
+      {
+        filename: `Lettre_Acceptation_${etudiant.MATRICULEETUDIANT}${path.extname(fichierLettre)}`,
+        path: filePath,
+        contentType: filePath.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'
       },
-      tls: {
-        ciphers: 'SSLv3'
-      }
-    });
+      ...logoAttachments // Ajouter le logo comme pièce jointe intégrée
+    ];
 
     const mailOptions = {
       from: '"Service des Stages - INS Cameroun" <inscamerounstage@gmail.com>',
       to: etudiant.EMAIL,
-      subject: `🎉 [INS Cameroun] Acceptation de votre stage - ${etudiant.MATRICULEETUDIANT}`,
+      subject: `🎉 [INS Cameroun] Acceptation de stage - ${etudiant.MATRICULEETUDIANT}`,
       text: plainText,
       html: htmlContent,
-      attachments: [{
-        filename: `Lettre_Acceptation_${etudiant.MATRICULEETUDIANT}${path.extname(fichierLettre)}`,
-        path: filePath,
-        contentType: filePath.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'
-      }],
-      replyTo: 'inscamerounstage@gmail.com'
+      attachments: allAttachments,
+      replyTo: 'inscamerounstage@gmail.com',
+      headers: {
+        'X-Priority': '1',
+        'X-MSMail-Priority': 'High',
+        'X-Mailer': 'Nodemailer',
+        'MIME-Version': '1.0',
+        'Importance': 'High'
+      }
     };
 
     console.log(`📨 Envoi email d'acceptation à: ${etudiant.EMAIL}`);
+    console.log(`🎨 Logo inclus: ${logoAttachments.length > 0 ? 'Oui' : 'Non'}`);
+    console.log(`📎 Fichier joint: ${path.basename(filePath)}`);
 
     const info = await transporter.sendMail(mailOptions);
     
     console.log('✅ Email d\'acceptation envoyé avec succès');
     console.log('📧 Message ID:', info.messageId);
+    console.log('📤 Réponse:', info.response || 'Pas de réponse du serveur');
     
     return {
       success: true,
       messageId: info.messageId,
-      email: etudiant.EMAIL
+      email: etudiant.EMAIL,
+      logoIncluded: logoAttachments.length > 0
     };
     
   } catch (error) {
     console.error('❌ Erreur envoi email d\'acceptation:', error.message);
+    console.error('🔧 Code d\'erreur:', error.code || 'N/A');
+    console.error('🔍 Stack:', error.stack);
     return {
       success: false,
       error: error.message
@@ -392,7 +551,8 @@ const create = async (req, res) => {
           EMAILSENT: emailResult?.success || false
         },
         emailSent: emailResult?.success || false,
-        emailInfo: emailResult
+        emailInfo: emailResult,
+        logoIncluded: emailResult?.logoIncluded || false
       });
       
     } catch (error) {
@@ -719,7 +879,8 @@ const renvoyerEmail = async (req, res) => {
     res.json({
       success: true,
       message: emailResult.success ? 'Email renvoyé avec succès' : 'Échec de l\'envoi de l\'email',
-      emailResult: emailResult
+      emailResult: emailResult,
+      logoIncluded: emailResult.logoIncluded || false
     });
     
   } catch (error) {

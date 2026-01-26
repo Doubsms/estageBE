@@ -94,7 +94,7 @@ app.post('/administrateurs', authenticateToken, (req, res) => administrateurCont
 app.use('/dashboard',  dashboardRouter);
 
 // ---- TEST D'ENVOI D'EMAIL ----
-app.post('/test-email', (req, res) => testmail.sendEmail(req, res));
+app.post('/test-email', (req, res) => testmail.sendEMail(req, res));
 app.post('/accuse-reception-dossier', (req, res) => envoiMail.sendAccuseReceptionDossier(req, res));
 
 // --- ÉTUDIANTS (protégé) ---
