@@ -78,6 +78,8 @@ exports.getDemandesNT = async (req, res) => {
         LETTREMOTIVATION: dossier.LETTREMOTIVATION ? `${baseUrl}${dossier.LETTREMOTIVATION}` : null,
         LETTRERECOMMENDATION: dossier.LETTRERECOMMENDATION ? `${baseUrl}${dossier.LETTRERECOMMENDATION}` : null,
         PHOTOPROFIL: dossier.PHOTOPROFIL ? `${baseUrl}${dossier.PHOTOPROFIL}` : null,
+        CV: dossier.CV ? `${baseUrl}${dossier.CV}` : null,                               // 👈 Ajout CV
+        CAHIERDECHARGE: dossier.CAHIERDECHARGE ? `${baseUrl}${dossier.CAHIERDECHARGE}` : null, // 👈 Ajout Cahier de charge
         
         // Infos étudiant
         MATRICULEETUDIANT: etudiant.MATRICULEETUDIANT || dossier.MATRICULEETUDIANT,

@@ -33,7 +33,9 @@ const handleFileUpload = upload.fields([
   { name: 'CERTIFICAT', maxCount: 1 },
   { name: 'LETTREMOTIVATION', maxCount: 1 },
   { name: 'LETTRERECOMMENDATION', maxCount: 1 },
-  { name: 'PHOTOPROFIL', maxCount: 1 }
+  { name: 'PHOTOPROFIL', maxCount: 1 },
+  { name: 'CV', maxCount: 1 },               // 👈 Ajout CV
+  { name: 'CAHIERDECHARGE', maxCount: 1 }    // 👈 Ajout Cahier de charge
 ]);
 
 // 1. Récupérer tous les dossiers
@@ -116,6 +118,8 @@ exports.create = async (req, res) => {
       if (files.LETTREMOTIVATION && files.LETTREMOTIVATION[0]) dossierData.LETTREMOTIVATION = files.LETTREMOTIVATION[0].filename;
       if (files.LETTRERECOMMENDATION && files.LETTRERECOMMENDATION[0]) dossierData.LETTRERECOMMENDATION = files.LETTRERECOMMENDATION[0].filename;
       if (files.PHOTOPROFIL && files.PHOTOPROFIL[0]) dossierData.PHOTOPROFIL = files.PHOTOPROFIL[0].filename;
+      if (files.CV && files.CV[0]) dossierData.CV = files.CV[0].filename;                                        // 👈 Ajout CV
+      if (files.CAHIERDECHARGE && files.CAHIERDECHARGE[0]) dossierData.CAHIERDECHARGE = files.CAHIERDECHARGE[0].filename; // 👈 Ajout Cahier de charge
 
       // Créer le dossier
       const nouveauDossier = await req.prisma.dossier.create({
@@ -232,7 +236,7 @@ exports.delete = async (req, res) => {
     }
     
     // Supprimer les fichiers associés s'ils existent
-    const fichiers = ['CNI', 'CERTIFICAT', 'LETTREMOTIVATION', 'LETTRERECOMMENDATION', 'PHOTOPROFIL'];
+    const fichiers = ['CNI', 'CERTIFICAT', 'LETTREMOTIVATION', 'LETTRERECOMMENDATION', 'PHOTOPROFIL', 'CV', 'CAHIERDECHARGE']; // 👈 Ajout CV et CAHIERDECHARGE
     fichiers.forEach(champ => {
       if (dossier[champ]) {
         const filePath = path.join('uploads/', dossier[champ]);

@@ -45,6 +45,21 @@ app.use(bodyParser.json());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// 👇 Servir les fichiers statiques du build Vite avec les bons headers
+app.use(express.static(path.join(__dirname, 'dist'), {
+  maxAge: '1d',
+  etag: false,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.js')) {
+      res.setHeader('Content-Type', 'application/javascript');
+    } else if (filePath.endsWith('.css')) {
+      res.setHeader('Content-Type', 'text/css');
+    } else if (filePath.endsWith('.html')) {
+      res.setHeader('Content-Type', 'text/html');
+    }
+  }
+}));
+
 // MIDDLEWARE POUR AJOUTER PRISMA À REQ
 app.use((req, res, next) => {
   req.prisma = prisma;
@@ -140,6 +155,12 @@ app.post('/encadreurs', authenticateToken, (req, res) => encadreurController.cre
 
 // --- Profil Administrateur (protégé) ---
 app.post('/profile', authenticateToken, (req, res) => profileController.getprofile(req, res));
+
+// 👇 Route de fallback pour le routage côté client (SPA)
+// Cette route DOIT être la dernière pour que les routes API fonctionnent
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 // --- DÉMARRAGE DU SERVEUR ---
 const PORT = process.env.PORT;
